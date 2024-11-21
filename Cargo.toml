@@ -1,0 +1,14 @@
+[package]
+name = "ezz"
+version = "1.0.0"
+edition = "2021"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive", "unicode"] }
+thiserror = "2"
+log = "0.4"
+simplelog = "0.12"
+notify-rust = "4"
+home = "0.5"
+encoding_rs = "0.8"
+windows-sys = { version = "0.59", features = ["Win32_Globalization"] }
