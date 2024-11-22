@@ -13,7 +13,7 @@ macro_rules! notify {
             let summary = match $ty {
                 Msg::Info => format!("🧐 ezz v{version}"),
                 Msg::Ok => format!("🥳 ezz v{version}"),
-                Msg::Err => format!("😢 ezz v{version}"),
+                Msg::Err => format!("🤬 ezz v{version}"),
             };
             let msg = format!($($arg)*);
             let _ = Notification::new()

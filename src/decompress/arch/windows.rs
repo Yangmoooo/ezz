@@ -1,5 +1,7 @@
 use encoding_rs::{GB18030, UTF_8};
+use std::io;
 use std::os::windows::process::CommandExt;
+use std::path::Path;
 use std::process::Command;
 use windows_sys::Win32::Globalization::GetACP;
 
@@ -19,3 +21,5 @@ pub fn decode_7z_output(input: &[u8]) -> String {
 pub fn set_creation_flags(cmd: &mut Command) {
     cmd.creation_flags(0x08000000);
 }
+
+pub fn set_exemode(_file: &Path) -> Result<(), io::Error> {}

@@ -69,7 +69,7 @@ fn run() -> Result<ExtractRes, Error> {
     let archive = &args.archive;
     let version = format!("v{}", env!("CARGO_PKG_VERSION"));
 
-    notify!(Msg::Info, "解压开始：\n正在处理 {archive:?}");
+    notify!(Msg::Info, "开始解压：\n正在处理文件 {archive:?}");
     info!("ezz {version} started, processing: {archive:?}");
 
     extract(archive, args.pw.as_deref(), args.db.as_deref())

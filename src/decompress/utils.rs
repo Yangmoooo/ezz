@@ -21,13 +21,15 @@ pub fn is_stego(file: &Path) -> bool {
 }
 
 pub fn setup_7zz() -> Result<String, Error> {
-    let sevenz = "zz"; // 正式环境中应为 7z
+    let sevenz_name = "7z"; // 测试时可以改为 "zz"，防止使用系统中的 7-Zip
     let sevenzz_path = env::current_exe()?.with_file_name(SEVENZZ);
-    if Command::new(sevenz).arg("--help").status().is_ok() {
-        Ok(sevenz.to_string())
+    if Command::new(sevenz_name).arg("--help").status().is_ok() {
+        Ok(sevenz_name.to_string())
     } else {
         if !sevenzz_path.exists() {
-            File::create(&sevenzz_path)?.write_all(EMBEDDED_7Z)?;
+            let mut sevenzz = File::create(&sevenzz_path)?;
+            sevenzz.write_all(EMBEDDED_7Z)?;
+            set_exemode(&sevenzz_path)?;
         }
         Ok(sevenzz_path.to_string_lossy().into_owned())
     }
