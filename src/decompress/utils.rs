@@ -3,7 +3,7 @@ use std::env;
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Output;
 
 #[cfg(target_os = "linux")]
 use super::arch::linux::*;
@@ -21,18 +21,13 @@ pub fn is_stego(file: &Path) -> bool {
 }
 
 pub fn setup_7zz() -> Result<String, Error> {
-    let sevenz_name = "7z"; // 测试时可以改为 "zz"，防止使用系统中的 7-Zip
     let sevenzz_path = env::current_exe()?.with_file_name(SEVENZZ);
-    if Command::new(sevenz_name).arg("--help").status().is_ok() {
-        Ok(sevenz_name.to_string())
-    } else {
-        if !sevenzz_path.exists() {
-            let mut sevenzz = File::create(&sevenzz_path)?;
-            sevenzz.write_all(EMBEDDED_7Z)?;
-            set_exemode(&sevenzz_path)?;
-        }
-        Ok(sevenzz_path.to_string_lossy().into_owned())
+    if !sevenzz_path.exists() {
+        let mut sevenzz = File::create(&sevenzz_path)?;
+        sevenzz.write_all(EMBEDDED_7Z)?;
+        set_exemode(&sevenzz_path)?;
     }
+    Ok(sevenzz_path.to_string_lossy().into_owned())
 }
 
 pub fn teardown_7zz() -> Result<(), Error> {
@@ -105,11 +100,22 @@ pub fn flatten_dir(dir: &Path) -> Result<ExtractRes, Error> {
         .collect();
 
     if entries.len() <= 2 {
+        // 处理了压缩包嵌套时可能发生的文件名与文件夹名冲突
+        let mut staging_path = None;
         for entry in &entries {
             let new_path = parent.join(entry.file_name().ok_or(Error::FileNameError)?);
-            fs::rename(entry, new_path)?;
+            if new_path.exists() && new_path.is_dir() {
+                let tmp_path = new_path.with_file_name("tmp");
+                fs::rename(entry, &tmp_path)?;
+                staging_path = Some(tmp_path);
+            } else {
+                fs::rename(entry, new_path)?;
+            }
         }
         fs::remove_dir(dir)?;
+        if let Some(tmp_path) = staging_path {
+            fs::rename(tmp_path, dir)?;
+        }
     }
 
     let file_name = entries[0]

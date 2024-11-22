@@ -42,7 +42,7 @@ pub fn command_x(zz: &str, archive: &Path, pw: &str) -> Result<Output, Error> {
     let mut cmd = Command::new(zz);
     cmd.arg("x")
         .args([&output_switch, &pw_switch])
-        .args(["-aoa", "-sdel", "-spe"])
+        .args(["-aoa", "-spe"])
         .arg(&archive_name);
     set_creation_flags(&mut cmd);
     Ok(cmd.output()?)
@@ -55,7 +55,7 @@ pub fn command_for_stego(zz: &str, video: &Path) -> Result<Output, Error> {
     let mut cmd = Command::new(zz);
     cmd.arg("x")
         .arg(&output_switch)
-        .args(["-aoa", "-sdel", "-t#"])
+        .args(["-aoa", "-t#"])
         .args([&video_name, "2.zip"]);
     set_creation_flags(&mut cmd);
     Ok(cmd.output()?)

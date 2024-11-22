@@ -4,6 +4,7 @@ pub mod sevenz;
 mod utils;
 
 use std::path::Path;
+use std::fs;
 
 use crate::error::EzzError as Error;
 use pwdb::*;
@@ -39,6 +40,7 @@ fn extract_with_pw(zz: &str, archive: &Path, pw: &str) -> Result<ExtractRes, Err
         delete_dir(&dir)?;
         return Err(e);
     }
+    fs::remove_file(archive)?;
     flatten_dir(&dir)
 }
 

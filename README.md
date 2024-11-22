@@ -18,7 +18,6 @@ A very light wrapper around [7-Zip](https://7-zip.org/), only supporting one-cli
 1. 可执行文件 `ezz.exe`（Linux 上为 `ezz`）
 2. 密码库文件 `ezz.db.txt`，未指定路径时将依次在程序目录和用户家目录下寻找
 3. 日志文件保存在程序目录下的 `ezz.log`（会自动创建）
-4. 优先使用系统中的 `7z`（建议为 24.08 版本），若无则会使用自带的临时 `7zz`
 
 ### 解手模式
 
