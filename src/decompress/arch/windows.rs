@@ -22,4 +22,6 @@ pub fn set_creation_flags(cmd: &mut Command) {
     cmd.creation_flags(0x08000000);
 }
 
-pub fn set_exemode(_file: &Path) -> Result<(), io::Error> {}
+pub fn set_exemode(_file: &Path) -> io::Result<()> {
+    Ok(())
+}
