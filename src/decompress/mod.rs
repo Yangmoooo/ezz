@@ -22,6 +22,7 @@ pub fn extract(archive: &Path, pw: Option<&str>, db: Option<&Path>) -> Result<Ex
 
     if is_stego(&archive) {
         handle_output(command_for_stego(&zz, &archive)?)?;
+        fs::remove_file(&archive)?;
         archive = archive.with_file_name("2.zip");
     }
 
