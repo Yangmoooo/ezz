@@ -2,13 +2,12 @@
 
 A very light wrapper around [7-Zip](https://7-zip.org/), only supporting one-click extraction
 
-封装了从 [7zip](https://github.com/ip7z/7zip) 项目中编译的可执行文件 `7zz` 用于解压
-
 ## ⭐ Features
 
 - 开箱即用，无多余操作
 - 一键无感运行，完成后显示桌面通知
-- 支持几乎所有的压缩格式，以及[隐写者](https://github.com/cenglin123/SteganographierGUI)文件
+- 支持几乎所有的压缩格式，以及 [隐写者](https://github.com/cenglin123/SteganographierGUI) 文件
+- 提取至当前目录，自动整理目录结构，并清理压缩包
 - 跨平台，支持 x86_64 架构 Windows 和 Linux
 
 ## 💡 Usage
@@ -73,6 +72,13 @@ Options:
 - 感谢 [7-Zip](https://www.7-zip.org/) 提供了强大的开源压缩工具
 - 感谢 [@cenglin123](https://github.com/cenglin123) 为探索可行的网盘保存方式所做出的大量实践和考证
 
-## 📝 License
+## 📄 License
 
-7-Zip 的许可证由多种许可证构成，主要内容是 [LGPL](https://www.gnu.org/licenses/lgpl-2.1.html)，本项目使用并分发了其二进制文件，因此也遵循 LGPL 许可证
+7-Zip 的许可证构成较为复杂，详见附件 [Lisence1](./assets/License1.txt) 和 [Lisence2](./assets/License2.txt)
+
+其主要的许可证是 [LGPL](https://www.gnu.org/licenses/lgpl-2.1.html)，而在本项目中：
+
+- Windows 版封装了通过 7-Zip [仓库](https://github.com/ip7z/7zip) 编译的 `7zz.exe`
+- Linux 版封装了 7-Zip [官网](https://7-zip.org/) 分发的 `7zz`
+
+因此本项目也遵循 [LGPL](https://www.gnu.org/licenses/lgpl-2.1.html) 许可
