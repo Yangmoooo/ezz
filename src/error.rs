@@ -8,9 +8,9 @@ pub enum EzzError {
     Io(#[from] std::io::Error),
     #[error("{0}")]
     Log(#[from] log::SetLoggerError),
-    #[error("退出码 {0:?}")]
+    #[error("7-Zip 退出码 {0:?}")]
     SevenzError(ExitCode),
-    #[error("无效的退出码")]
+    #[error("7-Zip 退出码无效")]
     InvalidExitCode,
     #[error("密码错误")]
     WrongPassword,

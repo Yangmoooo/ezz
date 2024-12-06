@@ -1,11 +1,15 @@
+use log::{error, info};
+use std::env;
+use std::fs::{self, File};
+use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Output};
 
 #[cfg(target_os = "linux")]
-use super::arch::linux::set_creation_flags;
+use super::arch::linux::*;
 #[cfg(target_os = "windows")]
-use super::arch::windows::set_creation_flags;
-use super::utils::derive_dir;
+use super::arch::windows::*;
+use super::cleanup::derive_dir;
 use crate::error::EzzError as Error;
 
 #[derive(Debug, PartialEq)]
@@ -59,4 +63,55 @@ pub fn command_for_stego(zz: &str, video: &Path) -> Result<Output, Error> {
         .args([&video_name, "2.zip"]);
     set_creation_flags(&mut cmd);
     Ok(cmd.output()?)
+}
+
+pub fn setup_7zz() -> Result<String, Error> {
+    let zz_path = env::current_exe()?.with_file_name(SEVENZZ);
+    if !zz_path.exists() {
+        let mut sevenzz = File::create(&zz_path)?;
+        sevenzz.write_all(EMBEDDED_7Z)?;
+        set_exemode(&zz_path)?;
+    }
+    Ok(zz_path.to_string_lossy().into_owned())
+}
+
+pub fn teardown_7zz() -> Result<(), Error> {
+    let zz_path = env::current_exe()?.with_file_name(SEVENZZ);
+    if zz_path.exists() {
+        fs::remove_file(zz_path)?;
+    }
+    Ok(())
+}
+
+pub fn handle_output(output: Output) -> Result<(), Error> {
+    let exit_code = output
+        .status
+        .code()
+        .ok_or(Error::SevenzError(ExitCode::UserStopped))?;
+    match ExitCode::try_from(exit_code) {
+        Ok(ExitCode::NoError) => {
+            info!("7-Zip extract success");
+            Ok(())
+        }
+        Ok(code) => {
+            let stderr = normalize_stderr(decode_7z_output(&output.stderr));
+            if code == ExitCode::FatalError && stderr.contains("Wrong password") {
+                Err(Error::WrongPassword)
+            } else {
+                error!("7-Zip stderr: {stderr}");
+                Err(Error::SevenzError(code))
+            }
+        }
+        Err(_) => Err(Error::InvalidExitCode),
+    }
+}
+
+fn normalize_stderr(stderr: String) -> String {
+    stderr
+        .trim_end_matches('\n')
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| line.trim())
+        .collect::<Vec<_>>()
+        .join(" ")
 }

@@ -1,15 +1,14 @@
 mod arch;
-mod pwdb;
+mod cleanup;
+mod passworddb;
 pub mod sevenz;
-mod utils;
 
 use std::path::Path;
-use std::fs;
 
 use crate::error::EzzError as Error;
-use pwdb::*;
+use cleanup::*;
+use passworddb::*;
 use sevenz::*;
-use utils::*;
 
 pub struct ExtractRes {
     pub first_file: String,
@@ -22,7 +21,7 @@ pub fn extract(archive: &Path, pw: Option<&str>, db: Option<&Path>) -> Result<Ex
 
     if is_stego(&archive) {
         handle_output(command_for_stego(&zz, &archive)?)?;
-        fs::remove_file(&archive)?;
+        remove_archive(&archive)?;
         archive = archive.with_file_name("2.zip");
     }
 
@@ -34,14 +33,21 @@ pub fn extract(archive: &Path, pw: Option<&str>, db: Option<&Path>) -> Result<Ex
     result
 }
 
+fn is_stego(file: &Path) -> bool {
+    matches!(
+        file.extension().and_then(|ext| ext.to_str()),
+        Some("mp4") | Some("mkv")
+    )
+}
+
 fn extract_with_pw(zz: &str, archive: &Path, pw: &str) -> Result<ExtractRes, Error> {
     let output = command_x(zz, archive, pw)?;
     let dir = derive_dir(archive)?;
     if let Err(e) = handle_output(output) {
-        delete_dir(&dir)?;
+        remove_dir(&dir)?;
         return Err(e);
     }
-    fs::remove_file(archive)?;
+    remove_archive(archive)?;
     flatten_dir(&dir)
 }
 
