@@ -7,8 +7,10 @@ A very light wrapper around [7-Zip](https://7-zip.org/), only supporting one-cli
 - 开箱即用，无多余操作
 - 一键无感运行，完成后显示桌面通知
 - 支持几乎所有的压缩格式，以及 [隐写者](https://github.com/cenglin123/SteganographierGUI) 文件
-- 提取至当前目录，自动整理目录结构，并清理压缩包
+- 提取至当前目录，自动整理目录结构[*](#关于目录结构)，并清理压缩包
 - 跨平台，支持 x86_64 架构 Windows 和 Linux
+
+![我管你这的那的](./assets/whatever.jpg)
 
 ## 💡 Usage
 
@@ -20,9 +22,9 @@ A very light wrapper around [7-Zip](https://7-zip.org/), only supporting one-cli
 
 ### 解手模式
 
-右键点击待处理的文件，选择用本程序打开即可
+右键点击待处理的文件，选择用本程序打开即可，配合 [Custom Context Menu](https://github.com/ikas-mc/ContextMenuForWindows11) 效果更佳
 
-**Notice**: 解手模式需要使用密码库
+本模式使用默认密码库中的密码，需要先配置密码库
 
 - 密码库中每行表示一个密码条目
 - 一行由 `频率`、`分隔符` 和 `密码` 三部分组成
@@ -67,6 +69,17 @@ Options:
   -V, --version        Print version
 ```
 
+## 🔔 Notice
+
+### 关于目录结构
+
+- 若压缩包中只有 1-2 个文件（夹），则直接提取到当前目录
+- 若压缩包中文件（夹）数量超过 2 个，则会提取到与压缩包同名的文件夹中，并排除重复的根目录
+
+### 关于 Custom Context Menu
+
+出于简洁性考虑，本程序不会添加至 Windows 右键菜单，但可以通过 [Custom Context Menu](https://github.com/ikas-mc/ContextMenuForWindows11) 实现。具体用法可以参考其 [Wiki](https://github.com/ikas-mc/ContextMenuForWindows11/wiki/Help)，也可以直接导入本人自用的 [配置文件](./assets/用%20ezz%20提取.json)，然后修改其中 `ezz` 的路径即可
+
 ## ❤️ Thanks
 
 - 感谢 [7-Zip](https://www.7-zip.org/) 提供了强大的开源压缩工具
@@ -81,4 +94,4 @@ Options:
 - Windows 版封装了通过 7-Zip [仓库](https://github.com/ip7z/7zip) 编译的 `7zz.exe`
 - Linux 版封装了 7-Zip [官网](https://7-zip.org/) 分发的 `7zz`
 
-因此本项目也遵循 [LGPL](https://www.gnu.org/licenses/lgpl-2.1.html) 许可
+因此本项目也遵循 LGPL 许可
