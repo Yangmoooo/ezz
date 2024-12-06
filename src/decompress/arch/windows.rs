@@ -5,7 +5,7 @@ use std::path::Path;
 use std::process::Command;
 use windows_sys::Win32::Globalization::GetACP;
 
-pub const EMBEDDED_7Z: &[u8] = include_bytes!("../../../assets/7zz.exe");
+pub const EMBEDDED_7Z: &[u8] = include_bytes!("../../../assets/7zip/7zz.exe");
 pub const SEVENZZ: &str = "7zz.exe";
 
 pub fn decode_7z_output(input: &[u8]) -> String {
