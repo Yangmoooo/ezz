@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use crate::decompress::sevenz::ExitCode;
+use crate::decompress::sevenzip::ExitCode;
 
 #[derive(Error, Debug)]
 pub enum EzzError {
@@ -9,7 +9,7 @@ pub enum EzzError {
     #[error("{0}")]
     Log(#[from] log::SetLoggerError),
     #[error("7-Zip 退出码 {0:?}")]
-    SevenzError(ExitCode),
+    Sevenzip(ExitCode),
     #[error("7-Zip 退出码无效")]
     InvalidExitCode,
     #[error("密码错误")]
@@ -23,3 +23,5 @@ pub enum EzzError {
     #[error("文件路径错误")]
     FilePathError,
 }
+
+pub type EzzResult<T> = Result<T, EzzError>;

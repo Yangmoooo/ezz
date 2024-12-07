@@ -1,21 +1,16 @@
 mod arch;
 mod cleanup;
-mod passworddb;
-pub mod sevenz;
+mod password;
+pub mod sevenzip;
 
 use std::path::Path;
 
-use crate::error::EzzError as Error;
+use crate::types::{EzzError, EzzResult};
 use cleanup::*;
-use passworddb::*;
-use sevenz::*;
+use password::*;
+use sevenzip::*;
 
-pub struct ExtractRes {
-    pub first_file: String,
-    pub file_count: usize,
-}
-
-pub fn extract(archive: &Path, pw: Option<&str>, db: Option<&Path>) -> Result<ExtractRes, Error> {
+pub fn extract(archive: &Path, pw: Option<&str>, db: Option<&Path>) -> EzzResult<String> {
     let mut archive = archive.to_path_buf();
     let zz = setup_7zz()?;
 
@@ -25,12 +20,20 @@ pub fn extract(archive: &Path, pw: Option<&str>, db: Option<&Path>) -> Result<Ex
         archive = archive.with_file_name("2.zip");
     }
 
-    let result = pw.map_or_else(
-        || extract_with_db(&zz, &archive, db),
-        |password| extract_with_pw(&zz, &archive, password),
-    );
+    if let Some(password) = pw {
+        extract_with_pw(&zz, &archive, password)?;
+    } else {
+        extract_with_db(&zz, &archive, db)?;
+    }
+
     teardown_7zz()?;
-    result
+
+    let filename = archive
+        .file_name()
+        .ok_or(EzzError::FileNameError)?
+        .to_string_lossy()
+        .into_owned();
+    Ok(filename)
 }
 
 fn is_stego(file: &Path) -> bool {
@@ -40,7 +43,7 @@ fn is_stego(file: &Path) -> bool {
     )
 }
 
-fn extract_with_pw(zz: &str, archive: &Path, pw: &str) -> Result<ExtractRes, Error> {
+fn extract_with_pw(zz: &str, archive: &Path, pw: &str) -> EzzResult<()> {
     let output = command_x(zz, archive, pw)?;
     let dir = derive_dir(archive)?;
     if let Err(e) = handle_output(output) {
@@ -51,7 +54,7 @@ fn extract_with_pw(zz: &str, archive: &Path, pw: &str) -> Result<ExtractRes, Err
     flatten_dir(&dir)
 }
 
-fn extract_with_db(zz: &str, archive: &Path, db: Option<&Path>) -> Result<ExtractRes, Error> {
+fn extract_with_db(zz: &str, archive: &Path, db: Option<&Path>) -> EzzResult<()> {
     let db = match db {
         Some(path) => path,
         None => &locate_db()?,
@@ -65,9 +68,9 @@ fn extract_with_db(zz: &str, archive: &Path, db: Option<&Path>) -> Result<Extrac
                 update_db(db, &mut entries)?;
                 return Ok(result);
             }
-            Err(Error::WrongPassword) => continue,
+            Err(EzzError::WrongPassword) => continue,
             Err(e) => return Err(e),
         }
     }
-    Err(Error::NoMatchedPassword)
+    Err(EzzError::NoMatchedPassword)
 }

@@ -2,7 +2,7 @@
 
 mod cli;
 mod decompress;
-mod error;
+mod types;
 #[macro_use]
 mod notify;
 
@@ -13,9 +13,9 @@ use std::env;
 use std::fs::File;
 
 use cli::Args;
-use decompress::{extract, ExtractRes};
-use error::EzzError as Error;
+use decompress::extract;
 use notify::Msg;
+use types::{EzzError, EzzResult};
 
 fn main() {
     if let Err(e) = init_logger() {
@@ -24,33 +24,24 @@ fn main() {
     }
 
     match run() {
-        Ok(res) => {
-            notify!(
-                Msg::Ok,
-                "解压成功：\n{} 等 {} 个文件已提取",
-                res.first_file,
-                res.file_count
-            );
-            info!(
-                "Done. {} and other {} files extracted",
-                res.first_file,
-                res.file_count - 1
-            );
+        Ok(filename) => {
+            notify!(Msg::Ok, "解压成功：\n{filename} 处理完毕",);
+            info!("Done. {filename} has been processed",);
         }
         Err(e) => {
             notify!(Msg::Err, "解压失败：\n{e}");
             match e {
-                Error::Io(e) => error!("I/O: {e:?}"),
-                Error::Log(e) => error!("Log: {e:?}"),
-                Error::SevenzError(e) => error!("7zip: {e:?}"),
-                Error::InvalidExitCode => error!("7zip: {e:?}"),
+                EzzError::Io(e) => error!("I/O: {e:?}"),
+                EzzError::Log(e) => error!("Log: {e:?}"),
+                EzzError::Sevenzip(e) => error!("7zip: {e:?}"),
+                EzzError::InvalidExitCode => error!("7zip: {e:?}"),
                 _ => error!("{e:?}"),
             }
         }
     }
 }
 
-fn init_logger() -> Result<(), Error> {
+fn init_logger() -> EzzResult<()> {
     let log_config = ConfigBuilder::new()
         .set_time_offset_to_local()
         .expect("Failed to set log time offset")
@@ -64,7 +55,7 @@ fn init_logger() -> Result<(), Error> {
     Ok(())
 }
 
-fn run() -> Result<ExtractRes, Error> {
+fn run() -> EzzResult<String> {
     let args = Args::parse();
     let archive = &args.archive;
     let version = format!("v{}", env!("CARGO_PKG_VERSION"));
