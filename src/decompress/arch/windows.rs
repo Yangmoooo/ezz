@@ -3,7 +3,7 @@ use std::io;
 use std::os::windows::process::CommandExt;
 use std::path::Path;
 use std::process::Command;
-use windows_sys::Win32::Globalization::GetACP;
+use windows::Win32::Globalization::GetACP;
 
 pub const EMBEDDED_7Z: &[u8] = include_bytes!("../../../assets/7zip/7zz.exe");
 pub const SEVENZZ: &str = "7zz.exe";

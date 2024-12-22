@@ -15,4 +15,4 @@ simplelog = "0.12"
 notify-rust = "4"
 home = "0.5"
 encoding_rs = "0.8"
-windows-sys = { version = "0.59", features = ["Win32_Globalization"] }
+windows = { version = "0.58", features = ["Win32_Globalization", "Win32_UI_WindowsAndMessaging"] }
