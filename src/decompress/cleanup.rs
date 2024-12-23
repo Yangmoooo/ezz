@@ -7,7 +7,8 @@ pub fn derive_dir(archive: &Path) -> EzzResult<PathBuf> {
     let archive_stem = archive
         .file_stem()
         .and_then(|s| s.to_str())
-        .ok_or(EzzError::FileNameError)?;
+        .ok_or(EzzError::FileNameError)?
+        .trim_end();
     let dir = archive
         .parent()
         .ok_or(EzzError::FilePathError)?
@@ -34,6 +35,7 @@ pub fn flatten_dir(dir: &Path) -> EzzResult<()> {
     if entries.len() == 1 {
         let entry = entries.first().ok_or(EzzError::FilePathError)?;
         let target_path = parent.join(entry.file_name().ok_or(EzzError::FileNameError)?);
+        // 若为 `.zip.7z` 这种嵌套的情况，内层压缩包名称可能会与解压目录冲突，故使用临时名称
         let tmp_path = target_path.with_extension("tmp");
 
         if target_path.exists() {
@@ -56,9 +58,9 @@ pub fn flatten_dir(dir: &Path) -> EzzResult<()> {
 
 enum MultiVolumeKind {
     None,
-    Rar, // such as .part1.rar .part2.rar
-    Num, // such as .7z.001 .7z.002 or .zip.001 .zip.002
-    Zip, // such as .zip .z01 .z02
+    Rar, // such as `.part1.rar` `.part2.rar`
+    Num, // such as `.7z.001` `.7z.002` or `.zip.001` `.zip.002`
+    Zip, // such as `.zip` `.z01` `.z02`
 }
 
 pub fn remove_archive(archive: &Path) -> EzzResult<()> {
