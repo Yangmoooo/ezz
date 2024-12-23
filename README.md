@@ -7,10 +7,10 @@ A very light wrapper around [7-Zip](https://7-zip.org/), only supporting one-cli
 - 开箱即用，无多余操作
 - 一键无感运行，完成后显示桌面通知
 - 支持几乎所有的压缩格式，以及 [隐写者](https://github.com/cenglin123/SteganographierGUI) 文件
-- 提取至当前目录，自动整理目录结构[*](#关于目录结构)，并清理压缩包
+- 提取至当前目录，自动整理 [目录结构](#关于目录结构)，并清理压缩包
 - 跨平台，支持 x86_64 架构 Windows 和 Linux
 
-![我管你这的那的](./assets/whatever.jpg)
+![我管你这的那的](./assets/whatever.jpg){: width="60%"}
 
 ## 💡 Usage
 
@@ -24,7 +24,7 @@ A very light wrapper around [7-Zip](https://7-zip.org/), only supporting one-cli
 
 右键点击待处理的文件，选择用本程序打开即可，配合 [Custom Context Menu](https://github.com/ikas-mc/ContextMenuForWindows11) 效果更佳
 
-本模式使用默认密码库中的密码，需要先配置密码库
+该模式使用默认密码库中的密码，需要先配置密码库
 
 - 密码库中每行表示一个密码条目
 - 一行由 `频率`、`分隔符` 和 `密码` 三部分组成
@@ -73,12 +73,26 @@ Options:
 
 ### 关于目录结构
 
-- 若压缩包中只有 1-2 个文件（夹），则直接提取到当前目录
-- 若压缩包中文件（夹）数量超过 2 个，则会提取到与压缩包同名的文件夹中，并排除重复的根目录
+- 若压缩包中只包含 1 个文件（夹），则直接提取至当前目录
+- 否则将提取至与压缩包同名的文件夹中，并排除重复的根目录
+
+### 关于分卷压缩包
+
+本程序支持标准风格的分卷：
+
+- 形如 `.001`、`.002`、`.003` 的分卷（一般由 7-Zip 生成）
+- 形如 `.part1.rar`、`.part2.rar` 的分卷
+- 形如 `.zip`、`.z01`、`.z02` 的分卷
+
+使用时请打开第一个分卷（但 zip 是最后一个），即 `.001`、`.part1.rar`、**`.zip`**，否则无法完全清理分卷文件
 
 ### 关于 Custom Context Menu
 
-出于简洁性考虑，本程序不会添加至 Windows 右键菜单，但可以通过 [Custom Context Menu](https://github.com/ikas-mc/ContextMenuForWindows11) 实现。具体用法可以参考其 [Wiki](https://github.com/ikas-mc/ContextMenuForWindows11/wiki/Help)，也可以直接导入本人自用的 [配置文件](./assets/用%20ezz%20提取.json)，然后修改其中 `ezz` 的路径即可
+作为一个 Portable App，本程序不会添加至 Windows 右键菜单
+
+但可以通过 [Custom Context Menu](https://github.com/ikas-mc/ContextMenuForWindows11) 来实现。具体用法请参考其 [Wiki](https://github.com/ikas-mc/ContextMenuForWindows11/wiki/Help)，或直接导入自用 [配置文件](./assets/用%20ezz%20提取.json)，然后修改其中 `ezz` 的路径即可
+
+请注意，尽管 Custom Context Menu 提供了选中多个文件后批量操作的功能，但本程序并不支持。如果将其 Match Files 设为 Each 模式，**似乎**能够工作（会出现错误通知），但不建议这样做
 
 ## ❤️ Thanks
 
