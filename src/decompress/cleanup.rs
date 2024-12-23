@@ -31,21 +31,23 @@ pub fn flatten_dir(dir: &Path) -> EzzResult<()> {
         .filter_map(|entry| entry.ok().map(|e| e.path()))
         .collect();
 
-    if entries.len() <= 2 {
-        // 处理了压缩包嵌套时可能发生的文件名与文件夹名冲突
-        let mut staging_path = None;
-        for entry in &entries {
-            let new_path = parent.join(entry.file_name().ok_or(EzzError::FileNameError)?);
-            if new_path.exists() && new_path.is_dir() {
-                let tmp_path = new_path.with_file_name("tmp");
+    if entries.len() == 1 {
+        let entry = entries.first().ok_or(EzzError::FilePathError)?;
+        let target_path = parent.join(entry.file_name().ok_or(EzzError::FileNameError)?);
+        let tmp_path = target_path.with_extension("tmp");
+
+        if target_path.exists() {
+            if target_path.is_dir() {
                 fs::rename(entry, &tmp_path)?;
-                staging_path = Some(tmp_path);
             } else {
-                fs::rename(entry, new_path)?;
+                return Err(EzzError::FilePathError);
             }
+        } else {
+            fs::rename(entry, target_path)?;
         }
+
         fs::remove_dir(dir)?;
-        if let Some(tmp_path) = staging_path {
+        if tmp_path.exists() {
             fs::rename(tmp_path, dir)?;
         }
     }
