@@ -54,8 +54,9 @@ pub fn flatten_dir(dir: &Path) -> EzzResult<()> {
 
 enum MultiVolumeKind {
     None,
-    Rar,
-    Sevenz,
+    Rar, // such as .part1.rar .part2.rar
+    Num, // such as .7z.001 .7z.002 or .zip.001 .zip.002
+    Zip, // such as .zip .z01 .z02
 }
 
 pub fn remove_archive(archive: &Path) -> EzzResult<()> {
@@ -69,21 +70,26 @@ pub fn remove_archive(archive: &Path) -> EzzResult<()> {
 }
 
 fn get_multivolume_kind(archive: &Path) -> MultiVolumeKind {
-    let ext = archive.extension().and_then(|s| s.to_str());
-    match ext {
-        Some("001") => MultiVolumeKind::Sevenz,
-        Some("rar") => {
-            let stem = archive.file_stem().and_then(|s| s.to_str());
-            match stem {
-                Some(stem) if stem.ends_with(".part1") => MultiVolumeKind::Rar,
-                _ => MultiVolumeKind::None,
-            }
-        }
+    let extension = match archive.extension().and_then(|s| s.to_str()) {
+        Some("001") => return MultiVolumeKind::Num,
+        Some("rar") => "rar",
+        Some("zip") => "zip",
+        _ => return MultiVolumeKind::None,
+    };
+    let stem = archive.file_stem().and_then(|s| s.to_str());
+
+    match extension {
+        "rar" if stem.map_or(false, |s| s.ends_with(".part1")) => MultiVolumeKind::Rar,
+        "zip" => archive
+            .parent()
+            .and_then(|parent| stem.map(|s| parent.join(format!("{}.z01", s))))
+            .filter(|volume| volume.exists())
+            .map_or(MultiVolumeKind::None, |_| MultiVolumeKind::Zip),
         _ => MultiVolumeKind::None,
     }
 }
 
-fn remove_multivolume(kind: MultiVolumeKind, archive: &Path, index: usize) -> EzzResult<()> {
+fn remove_multivolume(kind: MultiVolumeKind, archive: &Path, seq: usize) -> EzzResult<()> {
     let parent = archive.parent().ok_or(EzzError::FilePathError)?;
     let file_stem = archive
         .file_stem()
@@ -91,8 +97,8 @@ fn remove_multivolume(kind: MultiVolumeKind, archive: &Path, index: usize) -> Ez
         .to_string_lossy();
     let mut volume_path = PathBuf::new();
     match kind {
-        MultiVolumeKind::Sevenz => {
-            let volume_extension = format!("{:03}", index);
+        MultiVolumeKind::Num => {
+            let volume_extension = format!("{:03}", seq);
             let volume_name = format!("{}.{}", file_stem, volume_extension);
             volume_path = parent.join(volume_name);
         }
@@ -101,14 +107,19 @@ fn remove_multivolume(kind: MultiVolumeKind, archive: &Path, index: usize) -> Ez
                 .trim_end_matches(char::is_numeric)
                 .strip_suffix(".part")
                 .ok_or(EzzError::FileNameError)?;
-            let volume_name = format!("{}.part{}.rar", file_stem, index);
+            let volume_name = format!("{}.part{}.rar", file_stem, seq);
+            volume_path = parent.join(volume_name);
+        }
+        MultiVolumeKind::Zip => {
+            let volume_extension = format!("z{:02}", seq - 1);
+            let volume_name = format!("{}.{}", file_stem, volume_extension);
             volume_path = parent.join(volume_name);
         }
         MultiVolumeKind::None => {}
     }
     if volume_path.exists() {
         fs::remove_file(&volume_path)?;
-        remove_multivolume(kind, archive, index + 1)?;
+        remove_multivolume(kind, archive, seq + 1)?;
     }
     Ok(())
 }
