@@ -12,6 +12,11 @@ use sevenzip::*;
 
 pub fn extract(archive: &Path, pw: Option<&str>, db: Option<&Path>) -> EzzResult<String> {
     let mut archive = archive.to_path_buf();
+    let filename = archive
+        .file_name()
+        .ok_or(EzzError::FileNameError)?
+        .to_string_lossy()
+        .into_owned();
     let zz = setup_7zz()?;
 
     if is_stego(&archive) {
@@ -27,12 +32,6 @@ pub fn extract(archive: &Path, pw: Option<&str>, db: Option<&Path>) -> EzzResult
     }
 
     teardown_7zz()?;
-
-    let filename = archive
-        .file_name()
-        .ok_or(EzzError::FileNameError)?
-        .to_string_lossy()
-        .into_owned();
     Ok(filename)
 }
 
