@@ -10,7 +10,7 @@ A very light wrapper around [7-Zip](https://7-zip.org/), only supporting one-cli
 - 提取至当前目录，自动整理 [目录结构](#关于目录结构)，并清理压缩包
 - 跨平台，支持 x86_64 架构 Windows 和 Linux
 
-![我管你这的那的](./assets/whatever.jpg){: width="60%"}
+<img src="./assets/whatever.jpg" alt="我管你这的那的" width="60%" />
 
 ## 💡 Usage
 
