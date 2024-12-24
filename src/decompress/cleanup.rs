@@ -7,11 +7,11 @@ pub fn derive_dir(archive: &Path) -> EzzResult<PathBuf> {
     let archive_stem = archive
         .file_stem()
         .and_then(|s| s.to_str())
-        .ok_or(EzzError::FileNameError)?
+        .ok_or(EzzError::PathError)?
         .trim_end();
     let dir = archive
         .parent()
-        .ok_or(EzzError::FilePathError)?
+        .ok_or(EzzError::PathError)?
         .join(archive_stem);
     Ok(dir)
 }
@@ -23,18 +23,28 @@ pub fn remove_dir(dir: &Path) -> EzzResult<()> {
     Ok(())
 }
 
-pub fn flatten_dir(dir: &Path) -> EzzResult<()> {
+pub fn flatten_dir(dir: &Path) -> EzzResult<String> {
+    log::debug!("Flattening directory: {dir:?}");
     if !dir.is_dir() {
-        return Err(EzzError::FilePathError);
+        return Err(EzzError::PathError);
     }
-    let parent = dir.parent().ok_or(EzzError::FilePathError)?;
+    let parent = dir.parent().ok_or(EzzError::PathError)?;
     let entries: Vec<PathBuf> = fs::read_dir(dir)?
         .filter_map(|entry| entry.ok().map(|e| e.path()))
         .collect();
+    let mut filename = dir
+        .file_name()
+        .ok_or(EzzError::PathError)?
+        .to_string_lossy()
+        .into_owned();
 
     if entries.len() == 1 {
-        let entry = entries.first().ok_or(EzzError::FilePathError)?;
-        let target_path = parent.join(entry.file_name().ok_or(EzzError::FileNameError)?);
+        log::debug!("Moving single entry to parent directory");
+        let entry = entries.first().ok_or(EzzError::PathError)?;
+        let entryname = entry.file_name().ok_or(EzzError::PathError)?;
+        filename = entryname.to_string_lossy().into_owned();
+
+        let target_path = parent.join(entryname);
         // 若为 `.zip.7z` 这种嵌套的情况，内层压缩包名称可能会与解压目录冲突，故使用临时名称
         let tmp_path = target_path.with_extension("tmp");
 
@@ -42,7 +52,7 @@ pub fn flatten_dir(dir: &Path) -> EzzResult<()> {
             if target_path.is_dir() {
                 fs::rename(entry, &tmp_path)?;
             } else {
-                return Err(EzzError::FilePathError);
+                return Err(EzzError::PathError);
             }
         } else {
             fs::rename(entry, target_path)?;
@@ -53,7 +63,7 @@ pub fn flatten_dir(dir: &Path) -> EzzResult<()> {
             fs::rename(tmp_path, dir)?;
         }
     }
-    Ok(())
+    Ok(filename)
 }
 
 enum MultiVolumeKind {
@@ -94,10 +104,10 @@ fn get_multivolume_kind(archive: &Path) -> MultiVolumeKind {
 }
 
 fn remove_multivolume(kind: MultiVolumeKind, archive: &Path, seq: usize) -> EzzResult<()> {
-    let parent = archive.parent().ok_or(EzzError::FilePathError)?;
+    let parent = archive.parent().ok_or(EzzError::PathError)?;
     let file_stem = archive
         .file_stem()
-        .ok_or(EzzError::FileNameError)?
+        .ok_or(EzzError::PathError)?
         .to_string_lossy();
     let mut volume_path = PathBuf::new();
     match kind {
@@ -110,7 +120,7 @@ fn remove_multivolume(kind: MultiVolumeKind, archive: &Path, seq: usize) -> EzzR
             let file_stem = file_stem
                 .trim_end_matches(char::is_numeric)
                 .strip_suffix(".part")
-                .ok_or(EzzError::FileNameError)?;
+                .ok_or(EzzError::PathError)?;
             let volume_name = format!("{}.part{}.rar", file_stem, seq);
             volume_path = parent.join(volume_name);
         }

@@ -464,7 +464,7 @@ dependencies = [
 
 [[package]]
 name = "ezz"
-version = "1.1.1"
+version = "1.1.2"
 dependencies = [
  "clap",
  "encoding_rs",

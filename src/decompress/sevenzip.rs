@@ -53,7 +53,7 @@ pub fn command_x(zz: &str, archive: &Path, pw: &str) -> EzzResult<Output> {
 }
 
 pub fn command_for_stego(zz: &str, video: &Path) -> EzzResult<Output> {
-    let dir = video.parent().ok_or(EzzError::FilePathError)?;
+    let dir = video.parent().ok_or(EzzError::PathError)?;
     let output_switch = format!("-o{}", dir.to_string_lossy().into_owned());
     let video_name = video.to_string_lossy().into_owned();
     let mut cmd = Command::new(zz);

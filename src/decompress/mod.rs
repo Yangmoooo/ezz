@@ -12,25 +12,23 @@ use sevenzip::*;
 
 pub fn extract(archive: &Path, pw: Option<&str>, db: Option<&Path>) -> EzzResult<String> {
     let mut archive = archive.to_path_buf();
-    let filename = archive
-        .file_name()
-        .ok_or(EzzError::FileNameError)?
-        .to_string_lossy()
-        .into_owned();
     let zz = setup_7zz()?;
+    log::debug!("7-Zip Path: {zz:?}");
 
     if is_stego(&archive) {
+        log::debug!("Stego file detected: {archive:?}");
         handle_output(command_for_stego(&zz, &archive)?)?;
         remove_archive(&archive)?;
         archive = archive.with_file_name("2.zip");
     }
 
-    if let Some(password) = pw {
-        extract_with_pw(&zz, &archive, password)?;
+    let filename = if let Some(password) = pw {
+        extract_with_pw(&zz, &archive, password)?
     } else {
-        extract_with_db(&zz, &archive, db)?;
-    }
+        extract_with_db(&zz, &archive, db)?
+    };
 
+    log::debug!("Removing 7-Zip executable");
     teardown_7zz()?;
     Ok(filename)
 }
@@ -42,7 +40,7 @@ fn is_stego(file: &Path) -> bool {
     )
 }
 
-fn extract_with_pw(zz: &str, archive: &Path, pw: &str) -> EzzResult<()> {
+fn extract_with_pw(zz: &str, archive: &Path, pw: &str) -> EzzResult<String> {
     let output = command_x(zz, archive, pw)?;
     let dir = derive_dir(archive)?;
     if let Err(e) = handle_output(output) {
@@ -53,7 +51,7 @@ fn extract_with_pw(zz: &str, archive: &Path, pw: &str) -> EzzResult<()> {
     flatten_dir(&dir)
 }
 
-fn extract_with_db(zz: &str, archive: &Path, db: Option<&Path>) -> EzzResult<()> {
+fn extract_with_db(zz: &str, archive: &Path, db: Option<&Path>) -> EzzResult<String> {
     let db = match db {
         Some(path) => path,
         None => &locate_db()?,

@@ -25,8 +25,8 @@ fn main() {
 
     match run() {
         Ok(filename) => {
-            notify!(Msg::Ok, "解压成功：\n{filename} 处理完毕",);
-            info!("Done. {filename} has been processed",);
+            notify!(Msg::Ok, "解压成功：\n已保存至 {filename}",);
+            info!("Done. Saved to {filename:?}");
         }
         Err(e) => {
             notify!(Msg::Err, "解压失败：\n{e}");
@@ -48,7 +48,11 @@ fn init_logger() -> EzzResult<()> {
         .build();
     let log_path = env::current_exe()?.with_file_name("ezz.log");
     WriteLogger::init(
-        LevelFilter::Info,
+        if cfg!(debug_assertions) {
+            LevelFilter::Debug
+        } else {
+            LevelFilter::Info
+        },
         log_config,
         File::options().append(true).create(true).open(log_path)?,
     )?;

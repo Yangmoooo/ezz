@@ -8,8 +8,8 @@ use crate::types::{EzzError, EzzResult};
 pub fn locate_db() -> EzzResult<PathBuf> {
     let name = "ezz.db.txt";
     let ezz_path = env::current_exe()?;
-    let home_dir = home::home_dir().ok_or(EzzError::FilePathError)?;
-    let dirs = [ezz_path.parent().ok_or(EzzError::FilePathError)?, &home_dir];
+    let home_dir = home::home_dir().ok_or(EzzError::PathError)?;
+    let dirs = [ezz_path.parent().ok_or(EzzError::PathError)?, &home_dir];
 
     dirs.iter()
         .map(|dir| dir.join(name))
