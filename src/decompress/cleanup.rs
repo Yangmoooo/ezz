@@ -18,7 +18,13 @@ pub fn derive_dir(archive: &Path) -> EzzResult<PathBuf> {
 
 pub fn remove_dir(dir: &Path) -> EzzResult<()> {
     if dir.exists() && dir.is_dir() {
-        fs::remove_dir_all(dir)?;
+        let path = dir.to_string_lossy().into_owned();
+
+        #[cfg(target_os = "linux")]
+        super::arch::linux::rmdir(&path)?;
+
+        #[cfg(target_os = "windows")]
+        super::arch::windows::rmdir(&path)?;
     }
     Ok(())
 }
@@ -93,7 +99,7 @@ fn get_multivolume_kind(archive: &Path) -> MultiVolumeKind {
     let stem = archive.file_stem().and_then(|s| s.to_str());
 
     match extension {
-        "rar" if stem.map_or(false, |s| s.ends_with(".part1")) => MultiVolumeKind::Rar,
+        "rar" if stem.is_some_and(|s| s.ends_with(".part1")) => MultiVolumeKind::Rar,
         "zip" => archive
             .parent()
             .and_then(|parent| stem.map(|s| parent.join(format!("{}.z01", s))))

@@ -25,3 +25,12 @@ pub fn set_creation_flags(cmd: &mut Command) {
 pub fn set_exemode(_file: &Path) -> io::Result<()> {
     Ok(())
 }
+
+pub fn rmdir(dir: &str) -> io::Result<()> {
+    Command::new("cmd")
+        .args(["/C", "rmdir", "/s", "/q"])
+        .arg(dir)
+        .creation_flags(0x08000000)
+        .output()?;
+    Ok(())
+}
