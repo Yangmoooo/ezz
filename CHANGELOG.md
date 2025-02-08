@@ -9,7 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- 在密码库中未找到密码时，弹窗提示输入密码（仅限 Windows）
+- 在密码库中未找到密码时，弹窗提示输入密码
+
+### Fixed
+
+- 修复了当压缩包中文件较多时解压耗时过长的问题
+
+### Deprecated
+
+- 由于我不再使用 KDE，因此后续（包括本次）的功能更新将不再支持 Linux 桌面环境
 
 ## [1.1.2] - 2024-12-24
 
