@@ -18,8 +18,3 @@ pub fn set_exemode(file: &Path) -> Result<(), io::Error> {
     perms.set_mode(0o755);
     fs::set_permissions(file, perms)
 }
-
-pub fn rmdir(dir: &str) -> io::Result<()> {
-    Command::new("rm").arg("-rf").arg(dir).output()?;
-    Ok(())
-}

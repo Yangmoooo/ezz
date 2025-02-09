@@ -16,19 +16,6 @@ pub fn derive_dir(archive: &Path) -> EzzResult<PathBuf> {
     Ok(dir)
 }
 
-pub fn remove_dir(dir: &Path) -> EzzResult<()> {
-    if dir.exists() && dir.is_dir() {
-        let path = dir.to_string_lossy().into_owned();
-
-        #[cfg(target_os = "linux")]
-        super::arch::linux::rmdir(&path)?;
-
-        #[cfg(target_os = "windows")]
-        super::arch::windows::rmdir(&path)?;
-    }
-    Ok(())
-}
-
 pub fn flatten_dir(dir: &Path) -> EzzResult<String> {
     log::debug!("Flattening directory: {dir:?}");
     if !dir.is_dir() {

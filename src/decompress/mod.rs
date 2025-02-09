@@ -27,6 +27,7 @@ pub fn extract(archive: &Path, pw: Option<&str>, db: Option<&Path>) -> EzzResult
     } else {
         extract_with_db(&zz, &archive, db)?
     };
+    remove_archive(&archive)?;
 
     log::debug!("Removing 7-Zip executable");
     teardown_7zz()?;
@@ -41,13 +42,9 @@ fn is_stego(file: &Path) -> bool {
 }
 
 fn extract_with_pw(zz: &str, archive: &Path, pw: &str) -> EzzResult<String> {
-    let output = command_x(zz, archive, pw)?;
+    handle_output(command_t(zz, archive, pw)?)?;
+    handle_output(command_x(zz, archive, pw)?)?;
     let dir = derive_dir(archive)?;
-    if let Err(e) = handle_output(output) {
-        remove_dir(&dir)?;
-        return Err(e);
-    }
-    remove_archive(archive)?;
     flatten_dir(&dir)
 }
 

@@ -38,6 +38,18 @@ impl TryFrom<i32> for ExitCode {
     }
 }
 
+pub fn command_t(zz: &str, archive: &Path, pw: &str) -> EzzResult<Output> {
+    let pw_switch = format!("-p{}", pw);
+    let archive_name = archive.to_string_lossy().into_owned();
+    let mut cmd = Command::new(zz);
+    cmd.arg("t")
+        .arg(&pw_switch)
+        .args(["-bso0", "-bsp0"])
+        .arg(&archive_name);
+    set_creation_flags(&mut cmd);
+    Ok(cmd.output()?)
+}
+
 pub fn command_x(zz: &str, archive: &Path, pw: &str) -> EzzResult<Output> {
     let dir = derive_dir(archive)?;
     let output_switch = format!("-o{}", dir.to_string_lossy().into_owned());
@@ -46,7 +58,7 @@ pub fn command_x(zz: &str, archive: &Path, pw: &str) -> EzzResult<Output> {
     let mut cmd = Command::new(zz);
     cmd.arg("x")
         .args([&output_switch, &pw_switch])
-        .args(["-aoa", "-spe"])
+        .args(["-aoa", "-spe", "-bso0", "-bsp0"])
         .arg(&archive_name);
     set_creation_flags(&mut cmd);
     Ok(cmd.output()?)
@@ -59,7 +71,7 @@ pub fn command_for_stego(zz: &str, video: &Path) -> EzzResult<Output> {
     let mut cmd = Command::new(zz);
     cmd.arg("x")
         .arg(&output_switch)
-        .args(["-aoa", "-t#"])
+        .args(["-aoa", "-t#", "-bso0", "-bsp0"])
         .args([&video_name, "2.zip"]);
     set_creation_flags(&mut cmd);
     Ok(cmd.output()?)
@@ -90,7 +102,7 @@ pub fn handle_output(output: Output) -> EzzResult<()> {
         .ok_or(EzzError::Sevenzip(ExitCode::UserStopped))?;
     match ExitCode::try_from(exit_code) {
         Ok(ExitCode::NoError) => {
-            info!("7-Zip extract success");
+            info!("7-Zip t/x success");
             Ok(())
         }
         Ok(code) => {
