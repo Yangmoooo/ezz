@@ -38,26 +38,26 @@ impl TryFrom<i32> for ExitCode {
     }
 }
 
-pub fn command_t(zz: &str, archive: &Path, pw: &str) -> EzzResult<Output> {
-    let pw_switch = format!("-p{}", pw);
+pub fn command_t(zz: &str, archive: &Path, pwd: &str) -> EzzResult<Output> {
+    let pwd_switch = format!("-p{}", pwd);
     let archive_name = archive.to_string_lossy().into_owned();
     let mut cmd = Command::new(zz);
     cmd.arg("t")
-        .arg(&pw_switch)
+        .arg(&pwd_switch)
         .args(["-bso0", "-bsp0"])
         .arg(&archive_name);
     set_creation_flags(&mut cmd);
     Ok(cmd.output()?)
 }
 
-pub fn command_x(zz: &str, archive: &Path, pw: &str) -> EzzResult<Output> {
+pub fn command_x(zz: &str, archive: &Path, pwd: &str) -> EzzResult<Output> {
     let dir = derive_dir(archive)?;
     let output_switch = format!("-o{}", dir.to_string_lossy().into_owned());
-    let pw_switch = format!("-p{}", pw);
+    let pwd_switch = format!("-p{}", pwd);
     let archive_name = archive.to_string_lossy().into_owned();
     let mut cmd = Command::new(zz);
     cmd.arg("x")
-        .args([&output_switch, &pw_switch])
+        .args([&output_switch, &pwd_switch])
         .args(["-aoa", "-spe", "-bso0", "-bsp0"])
         .arg(&archive_name);
     set_creation_flags(&mut cmd);

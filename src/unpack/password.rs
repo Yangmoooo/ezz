@@ -23,7 +23,7 @@ pub fn parse_db(db: &Path) -> EzzResult<Vec<(u32, String)>> {
         .map_while(Result::ok)
         .filter_map(|line| {
             line.split_once(',')
-                .and_then(|(freq, pw)| freq.parse::<u32>().ok().map(|f| (f, pw.to_string())))
+                .and_then(|(freq, pwd)| freq.parse::<u32>().ok().map(|f| (f, pwd.to_string())))
         })
         .collect();
     Ok(entries)
@@ -32,8 +32,8 @@ pub fn parse_db(db: &Path) -> EzzResult<Vec<(u32, String)>> {
 pub fn update_db(db: &Path, entries: &mut Vec<(u32, String)>) -> EzzResult<()> {
     entries.sort_by(|a, b| b.0.cmp(&a.0));
     let mut writer = BufWriter::new(File::create(db)?);
-    for (freq, pw) in entries {
-        writeln!(writer, "{freq},{pw}")?;
+    for (freq, pwd) in entries {
+        writeln!(writer, "{freq},{pwd}")?;
     }
     Ok(())
 }

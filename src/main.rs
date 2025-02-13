@@ -1,8 +1,8 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
 mod cli;
-mod decompress;
 mod types;
+mod unpack;
 #[macro_use]
 mod notify;
 
@@ -14,9 +14,9 @@ use std::fs::{File, OpenOptions};
 use std::io::Write;
 
 use cli::{Action, Args};
-use decompress::{extract, locate_db};
 use notify::Msg;
 use types::{EzzError, EzzResult};
+use unpack::{extract, locate_db};
 
 fn main() {
     if let Err(e) = init_logger() {

@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use crate::decompress::sevenzip::ExitCode;
+use crate::unpack::sevenzip::ExitCode;
 
 #[derive(Error, Debug)]
 pub enum EzzError {
