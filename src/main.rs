@@ -10,26 +10,29 @@ use clap::Parser;
 use log::{error, info, LevelFilter};
 use simplelog::{ConfigBuilder, WriteLogger};
 use std::env;
-use std::fs::File;
+use std::fs::{File, OpenOptions};
+use std::io::Write;
 
-use cli::Args;
-use decompress::extract;
+use cli::{Action, Args};
+use decompress::{extract, locate_db};
 use notify::Msg;
 use types::{EzzError, EzzResult};
 
 fn main() {
     if let Err(e) = init_logger() {
-        notify!(Msg::Err, "初始化日志失败：\n{e:?}");
+        notify!(Msg::Err, "初始化日志失败！\n{e:?}");
         return;
     }
 
     match run() {
         Ok(filename) => {
-            notify!(Msg::Ok, "解压成功：\n已保存至 {filename}",);
-            info!("Done. Saved to {filename:?}");
+            if !filename.is_empty() {
+                notify!(Msg::Ok, "解压成功！\n已保存至 {filename}",);
+                info!("Done. Saved to {filename:?}");
+            }
         }
         Err(e) => {
-            notify!(Msg::Err, "解压失败：\n{e}");
+            notify!(Msg::Err, "解压失败！\n{e}");
             match e {
                 EzzError::Io(e) => error!("I/O: {e:?}"),
                 EzzError::Log(e) => error!("Log: {e:?}"),
@@ -61,11 +64,31 @@ fn init_logger() -> EzzResult<()> {
 
 fn run() -> EzzResult<String> {
     let args = Args::parse();
-    let archive = &args.archive;
-    let version = format!("v{}", env!("CARGO_PKG_VERSION"));
 
-    notify!(Msg::Info, "开始解压：\n正在处理文件 {archive:?}");
-    info!("ezz {version} started, processing: {archive:?}");
+    match args.action {
+        Action::Extract { archive, pwd, db } => {
+            let archive = &archive;
+            let version = format!("v{}", env!("CARGO_PKG_VERSION"));
 
-    extract(archive, args.pw.as_deref(), args.db.as_deref())
+            notify!(Msg::Info, "开始解压······\n正在处理文件 {archive:?}");
+            info!("ezz {version} started, processing: {archive:?}");
+
+            extract(archive, pwd.as_deref(), db.as_deref())
+        }
+        // 将密码添加到数据库里，成功返回空字符串，区别于解压得到的文件名
+        Action::Add { pwd, db } => {
+            let version = format!("v{}", env!("CARGO_PKG_VERSION"));
+            let db = match db {
+                Some(path) => path,
+                None => locate_db()?,
+            };
+            let mut file = OpenOptions::new().create(true).append(true).open(&db)?;
+            writeln!(file, "0,{pwd}")?;
+
+            notify!(Msg::Info, "密码添加成功！\n已保存至 {db:?}");
+            info!("ezz {version} added password: {pwd:?} to {db:?}");
+
+            EzzResult::Ok("".to_string())
+        }
+    }
 }
