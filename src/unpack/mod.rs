@@ -6,6 +6,8 @@ pub mod sevenzip;
 use std::path::Path;
 
 use crate::types::{EzzError, EzzResult};
+#[cfg(target_os = "windows")]
+use arch::windows::dialog::PasswordDialog;
 use cleanup::{derive_dir, flatten_dir, remove_archive};
 pub use password::locate_db;
 use password::{parse_db, update_db};
@@ -67,5 +69,21 @@ fn extract_with_db(zz: &str, archive: &Path, db: Option<&Path>) -> EzzResult<Str
             Err(e) => return Err(e),
         }
     }
-    Err(EzzError::NoMatchedPassword)
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(pwd) = PasswordDialog::ask_password()? {
+            let result = extract_with_pwd(zz, archive, &pwd)?;
+            entries.push((1, pwd));
+            update_db(db, &mut entries)?;
+            Ok(result)
+        } else {
+            Err(EzzError::NoMatchedPassword)
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        Err(EzzError::NoMatchedPassword)
+    }
 }

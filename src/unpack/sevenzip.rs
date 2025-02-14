@@ -8,7 +8,7 @@ use std::process::{Command, Output};
 #[cfg(target_os = "linux")]
 use super::arch::linux::*;
 #[cfg(target_os = "windows")]
-use super::arch::windows::*;
+use super::arch::windows::exe::*;
 use super::cleanup::derive_dir;
 use crate::types::{EzzError, EzzResult};
 
