@@ -36,6 +36,8 @@ fn main() {
             match e {
                 EzzError::Io(e) => error!("I/O: {e:?}"),
                 EzzError::Log(e) => error!("Log: {e:?}"),
+                #[cfg(target_os = "windows")]
+                EzzError::Ui(e) => error!("UI: {e:?}"),
                 EzzError::Sevenzip(e) => error!("7zip: {e:?}"),
                 EzzError::InvalidExitCode => error!("7zip: {e:?}"),
                 _ => error!("{e:?}"),
@@ -64,31 +66,41 @@ fn init_logger() -> EzzResult<()> {
 
 fn run() -> EzzResult<String> {
     let args = Args::parse();
+    let version = format!("v{}", env!("CARGO_PKG_VERSION"));
 
-    match args.action {
-        Action::Extract { archive, pwd, db } => {
-            let archive = &archive;
-            let version = format!("v{}", env!("CARGO_PKG_VERSION"));
-
-            notify!(Msg::Info, "开始解压······\n正在处理文件 {archive:?}");
-            info!("ezz {version} started, processing: {archive:?}");
-
-            extract(archive, pwd.as_deref(), db.as_deref())
-        }
-        // 将密码添加到数据库里，成功返回空字符串，区别于解压得到的文件名
-        Action::Add { pwd, db } => {
-            let version = format!("v{}", env!("CARGO_PKG_VERSION"));
+    match &args.action {
+        // 将密码添加到数据库，成功时返回空字符串，区别于解压得到的文件名
+        Some(Action::Add { pwd, db }) => {
             let db = match db {
                 Some(path) => path,
-                None => locate_db()?,
+                None => &locate_db()?,
             };
-            let mut file = OpenOptions::new().create(true).append(true).open(&db)?;
+            let mut file = OpenOptions::new().create(true).append(true).open(db)?;
             writeln!(file, "0,{pwd}")?;
 
             notify!(Msg::Info, "密码添加成功！\n已保存至 {db:?}");
             info!("ezz {version} added password: {pwd:?} to {db:?}");
 
             EzzResult::Ok("".to_string())
+        }
+        // 不使用子命令时，默认将传入的参数作为压缩文件路径进行提取
+        _ => {
+            let archive = match &args.action {
+                Some(Action::Extract { archive, .. }) => archive,
+                None => args.archive.as_ref().ok_or(EzzError::PathError)?,
+                _ => unreachable!(),
+            };
+
+            notify!(Msg::Info, "开始解压······\n正在处理文件 {archive:?}");
+            info!("ezz {version} started, processing: {archive:?}");
+
+            let (pwd, db) = match &args.action {
+                Some(Action::Extract { pwd, db, .. }) => (pwd.as_deref(), db.as_deref()),
+                None => (None, None),
+                _ => unreachable!(),
+            };
+
+            extract(archive, pwd, db)
         }
     }
 }

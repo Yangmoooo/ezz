@@ -1,7 +1,7 @@
 {
     "title": "用 ezz 提取",
     "exe": "\"D:\\Develop\\Projects\\ezz\\target\\release\\ezz.exe\"",
-    "param": "x \"{path}\"",
+    "param": "\"{path}\"",
     "icon": "\"D:\\Develop\\Projects\\ezz\\target\\release\\ezz.exe\",0",
     "acceptDirectory": false,
     "acceptDirectoryFlag": 0,
