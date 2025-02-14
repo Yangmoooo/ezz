@@ -7,9 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2025-02-14
+
 ### Added
 
 - 在密码库中未找到密码时，弹窗提示输入密码
+- 新增 `add` 子命令，用于向密码库中添加密码
+
+### Changed
+
+- 原有的命令行参数移动至 `extract` 子命令中
+- 若不使用子命令，现在仅接受一个参数作为压缩文件路径进行提取
 
 ### Fixed
 

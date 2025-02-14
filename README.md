@@ -44,30 +44,58 @@ A very light wrapper around [7-Zip](https://7-zip.org/), only supporting one-cli
 
 也可在命令行中添加密码：
 
-```pwsh
-ac DB_PATH "0,password"
-```
-
 ```sh
-echo "0,password" >> DB_PATH
+ezz a <PASSWORD>
 ```
 
 ### 终端模式
 
-由于 Windows 平台的模式设为了桌面程序（不会弹出终端窗口），导致其在终端不会有输出，包括 `--help` 和 `--version`，但程序可以接受参数并正确运行，参数如下：
+程序包含两个子命令：`extract` 和 `add`，分别用于提取压缩文件和向密码库中添加密码
 
-```pwsh
-Usage: ezz.exe [OPTIONS] <FILE>
+如果不指定子命令，默认会将传入的参数作为压缩文件路径执行 `extract`
+
+参数说明如下：
+
+```sh
+Usage: ezz [FILE] [COMMAND]
+
+Commands:
+  extract  e[X]tract an archive
+  add      [A]dd a password to the db
+  help     Print this message or the help of the given subcommand(s)
 
 Arguments:
-  <FILE>  指定输入文件路径
+  [FILE]  path to input file (when no subcommand is given, extract it)
 
 Options:
-  -p, --pw <PASSWORD>  指定密码
-  -d, --db <FILE>      指定密码库路径
-  -h, --help           Print help
-  -V, --version        Print version
+  -h, --help     Print help
+  -V, --version  Print version
+
+# 子命令 extract (x)
+Usage: ezz extract [OPTIONS] <FILE>
+
+Arguments:
+  <FILE>  path to input file
+
+Options:
+  -p, --pwd <PASSWORD>  specify password
+  -d, --db <FILE>       path to password db
+  -h, --help            Print help
+  -V, --version         Print version
+
+# 子命令 add (a)
+Usage: ezz add [OPTIONS] <PASSWORD>
+
+Arguments:
+  <PASSWORD>  password to add
+
+Options:
+  -d, --db <FILE>  path to password db
+  -h, --help       Print help
+  -V, --version    Print version
 ```
+
+由于 Windows 平台的模式设为了桌面程序（不会弹出终端窗口），导致其在终端不会有输出，包括 `--help` 和 `--version`，但程序可以正常接受参数并运行
 
 ## 🔔 Notice
 
