@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use crate::unpack::sevenzip::ExitCode;
+use crate::unpack::sevenz::ExitCode;
 
 #[derive(Error, Debug)]
 pub enum EzzError {
@@ -23,10 +23,7 @@ pub enum EzzError {
     #[error("密码错误")]
     WrongPassword,
 
-    #[error("未找到密码库")]
-    PasswordDbNotFound,
-
-    #[error("无匹配密码")]
+    #[error("密码库中无匹配密码")]
     NoMatchedPassword,
 
     #[error("文件路径或文件名错误")]

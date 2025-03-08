@@ -2,14 +2,13 @@ use log::{error, info};
 use std::env;
 use std::fs::{self, File};
 use std::io::Write;
-use std::path::Path;
 use std::process::{Command, Output};
 
+use super::Archive;
 #[cfg(target_os = "linux")]
 use super::arch::linux::*;
 #[cfg(target_os = "windows")]
 use super::arch::windows::exe::*;
-use super::cleanup::derive_dir;
 use crate::types::{EzzError, EzzResult};
 
 #[derive(Debug, PartialEq)]
@@ -38,45 +37,6 @@ impl TryFrom<i32> for ExitCode {
     }
 }
 
-pub fn command_t(zz: &str, archive: &Path, pwd: &str) -> EzzResult<Output> {
-    let pwd_switch = format!("-p{}", pwd);
-    let archive_name = archive.to_string_lossy().into_owned();
-    let mut cmd = Command::new(zz);
-    cmd.arg("t")
-        .arg(&pwd_switch)
-        .args(["-bso0", "-bsp0"])
-        .arg(&archive_name);
-    set_creation_flags(&mut cmd);
-    Ok(cmd.output()?)
-}
-
-pub fn command_x(zz: &str, archive: &Path, pwd: &str) -> EzzResult<Output> {
-    let dir = derive_dir(archive)?;
-    let output_switch = format!("-o{}", dir.to_string_lossy().into_owned());
-    let pwd_switch = format!("-p{}", pwd);
-    let archive_name = archive.to_string_lossy().into_owned();
-    let mut cmd = Command::new(zz);
-    cmd.arg("x")
-        .args([&output_switch, &pwd_switch])
-        .args(["-aoa", "-spe", "-bso0", "-bsp0"])
-        .arg(&archive_name);
-    set_creation_flags(&mut cmd);
-    Ok(cmd.output()?)
-}
-
-pub fn command_for_stego(zz: &str, video: &Path) -> EzzResult<Output> {
-    let dir = video.parent().ok_or(EzzError::PathError)?;
-    let output_switch = format!("-o{}", dir.to_string_lossy().into_owned());
-    let video_name = video.to_string_lossy().into_owned();
-    let mut cmd = Command::new(zz);
-    cmd.arg("x")
-        .arg(&output_switch)
-        .args(["-aoa", "-t#", "-bso0", "-bsp0"])
-        .args([&video_name, "2.zip"]);
-    set_creation_flags(&mut cmd);
-    Ok(cmd.output()?)
-}
-
 pub fn setup_7zz() -> EzzResult<String> {
     let zz_path = env::current_exe()?.with_file_name(SEVENZZ);
     if !zz_path.exists() {
@@ -95,7 +55,46 @@ pub fn teardown_7zz() -> EzzResult<()> {
     Ok(())
 }
 
-pub fn handle_output(output: Output) -> EzzResult<()> {
+pub fn command_t(zz: &str, archive: &Archive, pwd: &str) -> EzzResult<()> {
+    let pwd_switch = format!("-p{}", pwd);
+    let archive_name = archive.get_path().to_string_lossy().into_owned();
+    let mut cmd = Command::new(zz);
+    cmd.arg("t")
+        .arg(&pwd_switch)
+        .args(["-bso0", "-bsp0"])
+        .arg(&archive_name);
+    set_creation_flags(&mut cmd);
+    handle_output(cmd.output()?)
+}
+
+pub fn command_x(zz: &str, archive: &Archive, pwd: &str) -> EzzResult<()> {
+    let dir = archive.derive_dir()?;
+    let output_switch = format!("-o{}", dir.to_string_lossy().into_owned());
+    let pwd_switch = format!("-p{}", pwd);
+    let archive_name = archive.get_path().to_string_lossy().into_owned();
+    let mut cmd = Command::new(zz);
+    cmd.arg("x")
+        .args([&output_switch, &pwd_switch])
+        .args(["-aoa", "-spe", "-bso0", "-bsp0"])
+        .arg(&archive_name);
+    set_creation_flags(&mut cmd);
+    handle_output(cmd.output()?)
+}
+
+pub fn command_for_stego(zz: &str, video: &Archive) -> EzzResult<()> {
+    let parent = video.get_parent()?;
+    let output_switch = format!("-o{}", parent.to_string_lossy().into_owned());
+    let video_name = video.get_path().to_string_lossy().into_owned();
+    let mut cmd = Command::new(zz);
+    cmd.arg("x")
+        .arg(&output_switch)
+        .args(["-aoa", "-t#", "-bso0", "-bsp0"])
+        .args([&video_name, "2.zip"]);
+    set_creation_flags(&mut cmd);
+    handle_output(cmd.output()?)
+}
+
+fn handle_output(output: Output) -> EzzResult<()> {
     let exit_code = output
         .status
         .code()

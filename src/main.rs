@@ -7,16 +7,15 @@ mod unpack;
 mod notify;
 
 use clap::Parser;
-use log::{error, info, LevelFilter};
+use log::{LevelFilter, error, info};
 use simplelog::{ConfigBuilder, WriteLogger};
 use std::env;
-use std::fs::{File, OpenOptions};
-use std::io::Write;
+use std::fs::File;
 
 use cli::{Action, Args};
 use notify::Msg;
 use types::{EzzError, EzzResult};
-use unpack::{extract, locate_db};
+use unpack::{Archive, Vault};
 
 fn main() {
     if let Err(e) = init_logger() {
@@ -27,7 +26,7 @@ fn main() {
     match run() {
         Ok(filename) => {
             if !filename.is_empty() {
-                notify!(Msg::Ok, "解压成功！\n已保存至 {filename}",);
+                notify!(Msg::Ok, "解压成功！\n已保存至：{filename}",);
                 info!("Done. Saved to {filename:?}");
             }
         }
@@ -68,39 +67,35 @@ fn run() -> EzzResult<String> {
     let args = Args::parse();
     let version = format!("v{}", env!("CARGO_PKG_VERSION"));
 
-    match &args.action {
+    match args.action {
         // 将密码添加到数据库，成功时返回空字符串，区别于解压得到的文件名
-        Some(Action::Add { pwd, db }) => {
-            let db = match db {
-                Some(path) => path,
-                None => &locate_db()?,
-            };
-            let mut file = OpenOptions::new().create(true).append(true).open(db)?;
-            writeln!(file, "0,{pwd}")?;
+        Some(Action::Add { pwd, vault }) => {
+            let vault = vault.map(Vault::new).unwrap_or_default();
+            vault.add(&pwd)?;
 
-            notify!(Msg::Info, "密码添加成功！\n已保存至 {db:?}");
-            info!("ezz {version} added password: {pwd:?} to {db:?}");
+            notify!(Msg::Ok, "密码添加成功！\n保管库位于 {vault:?}");
+            info!("ezz {version} added password: {pwd:?} to {vault:?}");
 
             EzzResult::Ok("".to_string())
         }
         // 不使用子命令时，默认将传入的参数作为压缩文件路径进行提取
         _ => {
-            let archive = match &args.action {
-                Some(Action::Extract { archive, .. }) => archive,
-                None => args.archive.as_ref().ok_or(EzzError::PathError)?,
+            let (archive, pwd, vault) = match args.action {
+                Some(Action::Extract {
+                    archive,
+                    pwd,
+                    vault,
+                }) => (archive, pwd, vault),
+                None => (args.archive.ok_or(EzzError::PathError)?, None, None),
                 _ => unreachable!(),
             };
 
+            let archive = Archive::new(archive);
+            let vault = vault.map(Vault::new).unwrap_or_default();
             notify!(Msg::Info, "开始解压······\n正在处理文件 {archive:?}");
             info!("ezz {version} started, processing: {archive:?}");
 
-            let (pwd, db) = match &args.action {
-                Some(Action::Extract { pwd, db, .. }) => (pwd.as_deref(), db.as_deref()),
-                None => (None, None),
-                _ => unreachable!(),
-            };
-
-            extract(archive, pwd, db)
+            archive.extract(pwd.as_deref(), &vault)
         }
     }
 }
