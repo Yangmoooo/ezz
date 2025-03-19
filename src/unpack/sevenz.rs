@@ -62,6 +62,7 @@ pub fn command_t(zz: &str, archive: &Archive, pwd: &str) -> EzzResult<()> {
     cmd.arg("t")
         .arg(&pwd_switch)
         .args(["-bso0", "-bsp0"])
+        .args(["-sccUTF-8", "-scsUTF-8"])
         .arg(&archive_name);
     set_creation_flags(&mut cmd);
     handle_output(cmd.output()?)
@@ -75,7 +76,10 @@ pub fn command_x(zz: &str, archive: &Archive, pwd: &str) -> EzzResult<()> {
     let mut cmd = Command::new(zz);
     cmd.arg("x")
         .args([&output_switch, &pwd_switch])
-        .args(["-aoa", "-spe", "-bso0", "-bsp0"])
+        .arg("-aoa")
+        .arg("-spe")
+        .args(["-bso0", "-bsp0"])
+        .args(["-sccUTF-8", "-scsUTF-8"])
         .arg(&archive_name);
     set_creation_flags(&mut cmd);
     handle_output(cmd.output()?)
@@ -88,7 +92,10 @@ pub fn command_for_stego(zz: &str, video: &Archive) -> EzzResult<()> {
     let mut cmd = Command::new(zz);
     cmd.arg("x")
         .arg(&output_switch)
-        .args(["-aoa", "-t#", "-bso0", "-bsp0"])
+        .arg("-t#")
+        .arg("-aoa")
+        .args(["-bso0", "-bsp0"])
+        .args(["-sccUTF-8", "-scsUTF-8"])
         .args([&video_name, "2.zip"]);
     set_creation_flags(&mut cmd);
     handle_output(cmd.output()?)
@@ -105,7 +112,7 @@ fn handle_output(output: Output) -> EzzResult<()> {
             Ok(())
         }
         Ok(code) => {
-            let stderr = normalize_stderr(decode_7z_output(&output.stderr));
+            let stderr = normalize_stderr(String::from_utf8_lossy(&output.stderr).into_owned());
             if code == ExitCode::FatalError && stderr.contains("Wrong password") {
                 Err(EzzError::WrongPassword)
             } else {
