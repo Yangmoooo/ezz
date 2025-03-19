@@ -8,7 +8,7 @@ mod notify;
 
 use clap::Parser;
 use log::{LevelFilter, error, info};
-use simplelog::{ConfigBuilder, WriteLogger};
+use simplelog::{ConfigBuilder, WriteLogger, format_description};
 use std::env;
 use std::fs::File;
 
@@ -47,6 +47,9 @@ fn main() {
 
 fn init_logger() -> EzzResult<()> {
     let log_config = ConfigBuilder::new()
+        .set_time_format_custom(format_description!(
+            "[year]-[month]-[day] [hour]:[minute]:[second]"
+        ))
         .set_time_offset_to_local()
         .expect("Failed to set log time offset")
         .build();
