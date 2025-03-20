@@ -6,7 +6,7 @@ A very light wrapper around [7-Zip](https://7-zip.org/), only supporting one-cli
 
 - 开箱即用，无多余操作
 - 一键无感运行，完成后显示桌面通知
-- 支持几乎所有的压缩格式，以及 [隐写者](https://github.com/cenglin123/SteganographierGUI) 文件
+- 支持 7-Zip 的所有压缩格式，以及 [隐写者](https://github.com/cenglin123/SteganographierGUI) 文件
 - 提取至当前目录，自动整理 [目录结构](#关于目录结构)，并清理压缩包
 - 跨平台，支持 x86_64 架构 Windows 和 Linux
 
@@ -61,7 +61,7 @@ Usage: ezz [FILE] [COMMAND]
 
 Commands:
   extract  e[X]tract an archive
-  add      [A]dd a password to the db
+  add      [A]dd a password to the vault
   help     Print this message or the help of the given subcommand(s)
 
 Arguments:
@@ -79,7 +79,7 @@ Arguments:
 
 Options:
   -p, --pwd <PASSWORD>  specify password
-  -d, --db <FILE>       path to password db
+      --vault <FILE>    path to password vault
   -h, --help            Print help
   -V, --version         Print version
 
@@ -87,12 +87,12 @@ Options:
 Usage: ezz add [OPTIONS] <PASSWORD>
 
 Arguments:
-  <PASSWORD>  password to add
+  <PASSWORD>  password to adds
 
 Options:
-  -d, --db <FILE>  path to password db
-  -h, --help       Print help
-  -V, --version    Print version
+      --vault <FILE>    path to password vault
+  -h, --help            Print help
+  -V, --version         Print version
 ```
 
 由于 Windows 平台的模式设为了桌面程序（不会弹出终端窗口），导致其在终端不会有输出，包括 `--help` 和 `--version`，但程序可以正常接受参数并运行
