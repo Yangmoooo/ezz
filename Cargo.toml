@@ -11,11 +11,16 @@ log = "0.4"
 simplelog = "0.12"
 notify-rust = "4"
 home = "0.5"
+regex = "1.11"
+time = "0.3"
 
 [target.'cfg(windows)'.dependencies]
-encoding_rs = "0.8"
 native-windows-gui = { version = "1.0", features = ["high-dpi"] }
 native-windows-derive = "1.0"
 
 [target.'cfg(windows)'.build-dependencies]
 winres = "0.1"
+
+[profile.release]
+lto = true
+codegen-units = 1
