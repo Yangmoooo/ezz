@@ -6,7 +6,7 @@ use crate::types::{EzzError, EzzResult};
 impl Archive {
     pub fn remove(&self) -> EzzResult<()> {
         let path = self.get_path();
-        if path.exists() {
+        if path.try_exists()? {
             fs::remove_file(path)?;
         }
         match self.get_volume() {
@@ -30,7 +30,7 @@ impl Archive {
             VolumeType::Zip => self.get_path().with_extension(format!("z{:02}", seq - 1)),
             VolumeType::Single => unreachable!(),
         };
-        if volume.exists() {
+        if volume.try_exists()? {
             fs::remove_file(&volume)?;
             self.remove_multivolume(seq + 1)?;
         }

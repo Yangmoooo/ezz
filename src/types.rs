@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use crate::unpack::sevenz::ExitCode;
+use crate::unpack::sevenzz::ExitCode;
 
 #[derive(Error, Debug)]
 pub enum EzzError {
