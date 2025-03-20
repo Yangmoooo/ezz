@@ -61,8 +61,7 @@ impl Sevenzz {
         Ok(())
     }
 
-    // 返回压缩包内第一个非目录文件以供测试
-    // 若压缩包文件名被加密，则返回空字符串
+    // 返回压缩包内第一个非目录文件以供测试，若压缩包文件名被加密，则返回空字符串
     pub fn command_l(&self, archive: &Archive) -> EzzResult<String> {
         let archive_name = archive.get_path().to_string_lossy().into_owned();
         let mut cmd = Command::new(&self.0);
@@ -88,7 +87,7 @@ impl Sevenzz {
             cmd.arg(inner);
         }
         set_creation_flags(&mut cmd);
-        check_tx_output(cmd.output()?, true)
+        check_torx_output(cmd.output()?, true)
     }
 
     pub fn command_x(&self, archive: &Archive, pwd: &str) -> EzzResult<()> {
@@ -105,7 +104,7 @@ impl Sevenzz {
             .args(["-sccUTF-8", "-scsUTF-8"])
             .arg(&archive_name);
         set_creation_flags(&mut cmd);
-        check_tx_output(cmd.output()?, false)
+        check_torx_output(cmd.output()?, false)
     }
 
     pub fn command_for_stego(&self, video: &Archive) -> EzzResult<()> {
@@ -121,7 +120,7 @@ impl Sevenzz {
             .args(["-sccUTF-8", "-scsUTF-8"])
             .args([&video_name, "2.zip"]);
         set_creation_flags(&mut cmd);
-        check_tx_output(cmd.output()?, false)
+        check_torx_output(cmd.output()?, false)
     }
 }
 
@@ -145,8 +144,10 @@ fn find_first_file(output: Output) -> String {
             continue;
         }
         if let Some(caps) = re.captures(line) {
-            if let (Some(attr), Some(file_name)) = (caps.get(3), caps.get(6)) {
-                if !attr.as_str().starts_with('D') {
+            if let (Some(attr), Some(size), Some(file_name)) =
+                (caps.get(3), caps.get(4), caps.get(6))
+            {
+                if !attr.as_str().starts_with('D') && size.as_str() != "0" {
                     return file_name.as_str().trim().to_owned();
                 }
             }
@@ -155,25 +156,23 @@ fn find_first_file(output: Output) -> String {
     String::new()
 }
 
-fn check_tx_output(output: Output, is_test: bool) -> EzzResult<()> {
+fn check_torx_output(output: Output, is_test: bool) -> EzzResult<()> {
     let exit_code = output
         .status
         .code()
         .ok_or(EzzError::Sevenzip(ExitCode::UserStopped))?;
+    let cmd = if is_test { "Test" } else { "eXtract" };
     match ExitCode::try_from(exit_code) {
         Ok(ExitCode::NoError) => {
-            info!(
-                "7-Zip {} successful",
-                if is_test { "Test" } else { "eXtract" }
-            );
+            info!("7-Zip {cmd} successful");
             Ok(())
         }
         Ok(code) => {
-            let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+            let stderr = String::from_utf8_lossy(&output.stderr);
             if code == ExitCode::FatalError && stderr.contains("Wrong password") {
                 Err(EzzError::WrongPassword)
             } else {
-                error!("7-Zip stderr: {stderr}");
+                error!("7-Zip {cmd} failed, stderr: {stderr}");
                 Err(EzzError::Sevenzip(code))
             }
         }
