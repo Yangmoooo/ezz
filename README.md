@@ -6,7 +6,7 @@ A very light wrapper around [7-Zip](https://7-zip.org/), only supporting one-cli
 
 - 开箱即用，无多余操作
 - 一键无感运行，完成后显示桌面通知
-- 支持 7-Zip 的所有压缩格式，以及 [隐写者](https://github.com/cenglin123/SteganographierGUI) 文件
+- 支持 7-Zip 的所有压缩格式，以及 [隐写者](https://github.com/cenglin123/SteganographierGUI) 和 [apate](https://github.com/rippod/apate) 的默认格式
 - 提取至当前目录，自动整理 [目录结构](#关于目录结构)，并清理压缩包
 - 跨平台，支持 x86_64 架构 Windows 和 Linux
 
@@ -17,14 +17,14 @@ A very light wrapper around [7-Zip](https://7-zip.org/), only supporting one-cli
 完整组件包括：
 
 1. 可执行文件 `ezz.exe`（Linux 上为 `ezz`）
-2. 密码库文件 `ezz.db.txt`，未指定路径时将依次在程序目录和用户家目录下寻找
+2. 密码库文件 `ezz.vault`，未指定路径时将依次在程序目录和用户家目录下寻找
 3. 日志文件保存在程序目录下的 `ezz.log`（会自动创建）
 
 ### 解手模式
 
 右键点击待处理的文件，选择用本程序打开即可，配合 [Custom Context Menu](https://github.com/ikas-mc/ContextMenuForWindows11) 效果更佳
 
-该模式使用默认密码库中的密码，需要先配置密码库
+该模式使用默认密码库中的密码，若无匹配项则会弹出密码输入框
 
 - 密码库中每行表示一个密码条目
 - 一行由 `频率`、`分隔符` 和 `密码` 三部分组成

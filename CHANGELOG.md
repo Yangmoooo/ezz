@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2025-03-23
+
+### Added
+
+- 添加了 [apate](https://github.com/rippod/apate) 的默认格式（一键伪装）支持
+
+### Changed
+
+- 在日志中记录日期信息，格式为 `YYYY-MM-DD HH:mm:ss`
+- 测试密码时只会选择压缩包中的一个文件，显著缩短了处理时间（但对单个大文件仍无能为力）
+- 用方法重构了大部分函数，提升可读性
+
 ## [1.2.0] - 2025-02-14
 
 ### Added
