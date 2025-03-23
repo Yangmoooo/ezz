@@ -63,7 +63,7 @@ impl Archive {
         }
     }
 
-    pub fn is_stego(&self) -> bool {
+    pub fn is_hidden(&self) -> bool {
         matches!(
             self.get_extension().map(|ext| ext.to_ascii_lowercase()),
             Ok(ext) if ext == "mp4" || ext == "mkv"

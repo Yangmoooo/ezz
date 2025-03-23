@@ -107,7 +107,7 @@ impl Sevenzz {
         check_torx_output(cmd.output()?, false)
     }
 
-    pub fn command_for_stego(&self, video: &Archive) -> EzzResult<()> {
+    pub fn command_x_steganor(&self, video: &Archive) -> EzzResult<()> {
         let parent = video.get_parent()?;
         let output_switch = format!("-o{}", parent.to_string_lossy().into_owned());
         let video_name = video.get_path().to_string_lossy().into_owned();

@@ -1,6 +1,7 @@
 mod arch;
 mod archive;
 mod cleanup;
+mod reveal;
 pub mod sevenzz;
 mod vault;
 
@@ -18,14 +19,13 @@ impl Archive {
     pub fn extract(&self, pwd: Option<&str>, vault: &Vault) -> EzzResult<String> {
         let zz = Sevenzz::construct_from_embed()?;
 
-        let mut archive = self.clone();
-        if archive.is_stego() {
-            zz.command_for_stego(&archive)?;
-            archive.remove()?;
-            archive = archive.with_name("2.zip");
-        }
+        let archive = if self.is_hidden() {
+            &self.reveal(&zz)?
+        } else {
+            self
+        };
 
-        let inner_file = zz.command_l(&archive)?;
+        let inner_file = zz.command_l(archive)?;
         let file_name = if let Some(password) = pwd {
             archive.extract_with_pwd(&zz, password, &inner_file)?
         } else {
