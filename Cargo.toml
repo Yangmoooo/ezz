@@ -1,6 +1,6 @@
 [package]
 name = "ezz"
-version = "1.2.0"
+version = "1.3.0"
 edition = "2024"
 build = "build.rs"
 
@@ -22,5 +22,6 @@ native-windows-derive = "1.0"
 winres = "0.1"
 
 [profile.release]
-lto = true
+lto = "fat"
+panic = "abort"
 codegen-units = 1
