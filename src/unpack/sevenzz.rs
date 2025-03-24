@@ -9,9 +9,9 @@ use std::process::{Command, Output};
 
 use super::Archive;
 #[cfg(target_os = "linux")]
-use super::arch::linux::*;
+use super::platform::linux::exe::*;
 #[cfg(target_os = "windows")]
-use super::arch::windows::exe::*;
+use super::platform::windows::exe::*;
 use crate::types::{EzzError, EzzResult};
 
 #[derive(Debug, PartialEq)]
