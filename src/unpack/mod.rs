@@ -43,7 +43,7 @@ impl Archive {
     fn extract_with_pwd(&self, zz: &Sevenzz, pwd: &str, inner: &str) -> EzzResult<String> {
         zz.command_t(self, pwd, inner)?;
         zz.command_x(self, pwd)?;
-        flatten_dir(self.derive_dir()?)
+        flatten_dir(self.derive_dir())
     }
 
     fn extract_with_vault(&self, zz: &Sevenzz, vault: &Vault, inner: &str) -> EzzResult<String> {
@@ -81,22 +81,16 @@ impl Archive {
     }
 }
 
-impl Archive {
-    pub fn derive_dir(&self) -> EzzResult<PathBuf> {
-        Ok(self.get_path().with_file_name(self.get_stem()?))
-    }
-}
-
 fn flatten_dir(dir: PathBuf) -> EzzResult<String> {
     if !dir.is_dir() {
         return Err(EzzError::PathError);
     }
 
-    let mut result_name = dir
+    let dir_name = dir
         .file_name()
         .ok_or(EzzError::PathError)?
-        .to_string_lossy()
-        .into_owned();
+        .to_string_lossy();
+    let mut result_name = dir_name.clone();
 
     let entries: Vec<PathBuf> = fs::read_dir(&dir)?
         .filter_map(|entry| entry.ok().map(|e| e.path()))
@@ -104,7 +98,7 @@ fn flatten_dir(dir: PathBuf) -> EzzResult<String> {
     if entries.len() == 1 {
         let entry = entries.first().ok_or(EzzError::PathError)?;
         let entry_name = entry.file_name().ok_or(EzzError::PathError)?;
-        result_name = entry_name.to_string_lossy().into_owned();
+        result_name = entry_name.to_string_lossy();
 
         let target_path = dir.with_file_name(entry_name);
         // 若为 `.zip.7z` 这种嵌套的情况，内层压缩包名称可能会与解压目录冲突，故使用临时名称
@@ -118,15 +112,16 @@ fn flatten_dir(dir: PathBuf) -> EzzResult<String> {
                 return Err(EzzError::PathError);
             }
         } else {
-            fs::rename(entry, target_path)?;
+            fs::rename(entry, &target_path)?;
         }
 
         fs::remove_dir(&dir)?;
         if temp_path.try_exists()? {
-            fs::rename(temp_path, dir)?;
+            fs::rename(temp_path, &dir)?;
+            result_name = dir_name;
         }
     }
-    Ok(result_name)
+    Ok(result_name.into_owned())
 }
 
 fn bubble_up(index: usize, pairs: &mut [(u32, String)]) {

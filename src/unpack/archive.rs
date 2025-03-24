@@ -26,6 +26,13 @@ impl Archive {
         &self.0
     }
 
+    pub fn get_parent(&self) -> EzzResult<PathBuf> {
+        self.0
+            .parent()
+            .map(|p| p.to_owned())
+            .ok_or(EzzError::PathError)
+    }
+
     pub fn get_stem(&self) -> EzzResult<String> {
         self.0
             .file_stem()
@@ -39,13 +46,6 @@ impl Archive {
             .extension()
             .and_then(|s| s.to_str())
             .map(|s| s.to_owned())
-            .ok_or(EzzError::PathError)
-    }
-
-    pub fn get_parent(&self) -> EzzResult<PathBuf> {
-        self.0
-            .parent()
-            .map(|p| p.to_owned())
             .ok_or(EzzError::PathError)
     }
 }
@@ -68,6 +68,14 @@ impl Archive {
             self.get_extension().map(|ext| ext.to_ascii_lowercase()),
             Ok(ext) if ext == "mp4" || ext == "mkv"
         )
+    }
+
+    pub fn derive_dir(&self) -> PathBuf {
+        let path = self.get_path();
+        match self.get_volume() {
+            VolumeType::Single | VolumeType::Zip => path.with_extension(""),
+            VolumeType::Num | VolumeType::Rar => path.with_extension("").with_extension(""),
+        }
     }
 }
 
