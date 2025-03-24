@@ -1,13 +1,13 @@
-use std::fs;
+use std::path::PathBuf;
 
 use super::archive::{Archive, VolumeType};
-use crate::types::{EzzError, EzzResult};
+use crate::types::EzzResult;
 
 impl Archive {
     pub fn remove(&self) -> EzzResult<()> {
         let path = self.get_path();
         if path.try_exists()? {
-            fs::remove_file(path)?;
+            trash::delete(path)?;
         }
         match self.get_volume() {
             VolumeType::Single => Ok(()),
@@ -16,24 +16,39 @@ impl Archive {
     }
 
     fn remove_multivolume(&self, seq: usize) -> EzzResult<()> {
-        let volume = match self.get_volume() {
-            VolumeType::Num => self.get_path().with_extension(format!("{:03}", seq)),
-            VolumeType::Rar => {
-                let stem = self.get_stem()?;
-                let file_stem = stem
-                    .trim_end_matches(char::is_numeric)
-                    .strip_suffix(".part")
-                    .ok_or(EzzError::PathError)?;
-                self.get_path()
-                    .with_file_name(format!("{}.part{}.rar", file_stem, seq))
+        let generator: Box<dyn Fn(usize) -> PathBuf> = match self.get_volume() {
+            VolumeType::Num => {
+                Box::new(|seq| self.get_path().with_extension(format!("{:03}", seq)))
             }
-            VolumeType::Zip => self.get_path().with_extension(format!("z{:02}", seq - 1)),
+            VolumeType::Rar => {
+                let base: PathBuf = self.get_stem()?.into();
+                Box::new(move |seq| base.with_extension(format!("part{}.rar", seq)))
+            }
+            VolumeType::Zip => {
+                Box::new(|seq| self.get_path().with_extension(format!("z{:02}", seq - 1)))
+            }
             VolumeType::Single => unreachable!(),
         };
-        if volume.try_exists()? {
-            fs::remove_file(&volume)?;
-            self.remove_multivolume(seq + 1)?;
-        }
+        let volumes = collect_volumes(seq, generator);
+        trash::delete_all(volumes)?;
+
         Ok(())
     }
+}
+
+fn collect_volumes<F>(mut seq: usize, generator: F) -> Vec<PathBuf>
+where
+    F: Fn(usize) -> PathBuf,
+{
+    let mut volumes: Vec<PathBuf> = Vec::new();
+    loop {
+        let volume = generator(seq);
+        if volume.try_exists().unwrap_or(false) {
+            volumes.push(volume);
+            seq += 1;
+        } else {
+            break;
+        }
+    }
+    volumes
 }

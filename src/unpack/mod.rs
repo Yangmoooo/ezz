@@ -1,6 +1,6 @@
-mod arch;
 mod archive;
 mod cleanup;
+mod platform;
 mod reveal;
 pub mod sevenzz;
 mod vault;
@@ -9,9 +9,11 @@ use std::fs;
 use std::path::PathBuf;
 
 use crate::types::{EzzError, EzzResult};
-#[cfg(target_os = "windows")]
-use arch::windows::dialog::PasswordDialog;
 pub use archive::Archive;
+#[cfg(target_os = "linux")]
+use platform::linux::explorer;
+#[cfg(target_os = "windows")]
+use platform::windows::{dialog::PasswordDialog, explorer};
 use sevenzz::Sevenzz;
 pub use vault::Vault;
 
@@ -32,6 +34,7 @@ impl Archive {
             archive.extract_with_vault(&zz, vault, &inner_file)?
         };
         archive.remove()?;
+        explorer::refresh_dir(archive.get_parent()?.to_str().ok_or(EzzError::PathError)?);
 
         zz.deconstruct()?;
         Ok(file_name)
