@@ -1,8 +1,9 @@
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::types::{EzzError, EzzResult};
 
+#[derive(Copy, Clone)]
 pub enum VolumeType {
     Single,
     Rar, // such as `.part1.rar` `.part2.rar`
@@ -11,76 +12,60 @@ pub enum VolumeType {
 }
 
 #[derive(Clone)]
-pub struct Archive(PathBuf);
-
-impl Archive {
-    pub fn new<P: Into<PathBuf>>(path: P) -> Self {
-        Self(path.into())
-    }
-
-    pub fn with_name(&self, name: &str) -> Self {
-        Self(self.0.with_file_name(name))
-    }
-
-    pub fn get_path(&self) -> &PathBuf {
-        &self.0
-    }
-
-    pub fn get_parent(&self) -> EzzResult<PathBuf> {
-        self.0
-            .parent()
-            .map(|p| p.to_owned())
-            .ok_or(EzzError::PathError)
-    }
-
-    pub fn get_stem(&self) -> EzzResult<String> {
-        self.0
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .map(|s| s.to_owned())
-            .ok_or(EzzError::PathError)
-    }
-
-    pub fn get_extension(&self) -> EzzResult<String> {
-        self.0
-            .extension()
-            .and_then(|s| s.to_str())
-            .map(|s| s.to_owned())
-            .ok_or(EzzError::PathError)
-    }
+pub struct Archive {
+    path: PathBuf,
+    pub volume: VolumeType,
+    pub is_hidden: bool,
 }
 
 impl Archive {
-    pub fn get_volume(&self) -> VolumeType {
-        let extension = self.get_extension().unwrap_or_default();
-        let stem = self.get_stem().unwrap_or_default();
-
-        match extension.as_str() {
+    pub fn new<P: Into<PathBuf>>(path: P) -> Self {
+        let path: PathBuf = path.into();
+        let stem = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default();
+        let ext = path
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default();
+        let volume = match ext {
             "001" => VolumeType::Num,
             "rar" if stem.ends_with(".part1") => VolumeType::Rar,
-            "zip" if self.get_path().with_extension("z01").exists() => VolumeType::Zip,
+            "zip" if path.with_extension("z01").exists() => VolumeType::Zip,
             _ => VolumeType::Single,
+        };
+        let is_hidden = matches!(ext.to_ascii_lowercase().as_str(), "mp4" | "mkv");
+
+        Self {
+            path,
+            volume,
+            is_hidden,
         }
     }
 
-    pub fn is_hidden(&self) -> bool {
-        matches!(
-            self.get_extension().map(|ext| ext.to_ascii_lowercase()),
-            Ok(ext) if ext == "mp4" || ext == "mkv"
-        )
+    pub fn with_name(&self, name: &str) -> Self {
+        Self::new(self.path.with_file_name(name))
+    }
+
+    pub fn get_path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn get_parent(&self) -> EzzResult<&Path> {
+        self.path.parent().ok_or(EzzError::PathError)
     }
 
     pub fn derive_dir(&self) -> PathBuf {
-        let path = self.get_path();
-        match self.get_volume() {
-            VolumeType::Single | VolumeType::Zip => path.with_extension(""),
-            VolumeType::Num | VolumeType::Rar => path.with_extension("").with_extension(""),
+        match self.volume {
+            VolumeType::Single | VolumeType::Zip => self.path.with_extension(""),
+            VolumeType::Num | VolumeType::Rar => self.path.with_extension("").with_extension(""),
         }
     }
 }
 
 impl fmt::Debug for Archive {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", self.0)
+        write!(f, "{:?}", self.path)
     }
 }

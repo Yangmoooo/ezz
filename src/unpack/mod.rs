@@ -6,7 +6,7 @@ pub mod sevenzz;
 mod vault;
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::types::{EzzError, EzzResult};
 pub use archive::Archive;
@@ -21,7 +21,7 @@ impl Archive {
     pub fn extract(&self, pwd: Option<&str>, vault: &Vault) -> EzzResult<String> {
         let zz = Sevenzz::construct_from_embed()?;
 
-        let archive = if self.is_hidden() {
+        let archive = if self.is_hidden {
             &self.reveal(&zz)?
         } else {
             self
@@ -43,7 +43,7 @@ impl Archive {
     fn extract_with_pwd(&self, zz: &Sevenzz, pwd: &str, inner: &str) -> EzzResult<String> {
         zz.command_t(self, pwd, inner)?;
         zz.command_x(self, pwd)?;
-        flatten_dir(self.derive_dir())
+        flatten_dir(&self.derive_dir())
     }
 
     fn extract_with_vault(&self, zz: &Sevenzz, vault: &Vault, inner: &str) -> EzzResult<String> {
@@ -81,7 +81,7 @@ impl Archive {
     }
 }
 
-fn flatten_dir(dir: PathBuf) -> EzzResult<String> {
+fn flatten_dir(dir: &Path) -> EzzResult<String> {
     if !dir.is_dir() {
         return Err(EzzError::PathError);
     }
@@ -92,7 +92,7 @@ fn flatten_dir(dir: PathBuf) -> EzzResult<String> {
         .to_string_lossy();
     let mut result_name = dir_name.clone();
 
-    let entries: Vec<PathBuf> = fs::read_dir(&dir)?
+    let entries: Vec<PathBuf> = fs::read_dir(dir)?
         .filter_map(|entry| entry.ok().map(|e| e.path()))
         .collect();
     if entries.len() == 1 {
@@ -115,9 +115,9 @@ fn flatten_dir(dir: PathBuf) -> EzzResult<String> {
             fs::rename(entry, &target_path)?;
         }
 
-        fs::remove_dir(&dir)?;
+        fs::remove_dir(dir)?;
         if temp_path.try_exists()? {
-            fs::rename(temp_path, &dir)?;
+            fs::rename(temp_path, dir)?;
             result_name = dir_name;
         }
     }

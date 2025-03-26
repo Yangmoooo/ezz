@@ -83,7 +83,7 @@ fn run() -> EzzResult<String> {
         }
         // 不使用子命令时，默认将传入的参数作为压缩文件路径进行提取
         _ => {
-            let (archive, pwd, vault) = match args.action {
+            let (archive_path, pwd, vault_path) = match args.action {
                 Some(Action::Extract {
                     archive,
                     pwd,
@@ -93,8 +93,8 @@ fn run() -> EzzResult<String> {
                 _ => unreachable!(),
             };
 
-            let archive = Archive::new(archive);
-            let vault = vault.map(Vault::new).unwrap_or_default();
+            let archive = Archive::new(archive_path);
+            let vault = vault_path.map(Vault::new).unwrap_or_default();
             notify!(Msg::Info, "开始解压······\n正在处理文件 {archive:?}");
             info!("ezz {version} started, processing: {archive:?}");
 

@@ -9,14 +9,14 @@ impl Archive {
         if path.try_exists()? {
             trash::delete(path)?;
         }
-        match self.get_volume() {
+        match self.volume {
             VolumeType::Single => Ok(()),
             _ => self.remove_multivolume(2),
         }
     }
 
     fn remove_multivolume(&self, seq: usize) -> EzzResult<()> {
-        let generator: Box<dyn Fn(usize) -> PathBuf> = match self.get_volume() {
+        let generator: Box<dyn Fn(usize) -> PathBuf> = match self.volume {
             VolumeType::Num => {
                 Box::new(|seq| self.get_path().with_extension(format!("{:03}", seq)))
             }
