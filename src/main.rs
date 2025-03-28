@@ -1,8 +1,8 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
 mod cli;
+mod extractor;
 mod types;
-mod unpack;
 #[macro_use]
 mod notify;
 
@@ -13,9 +13,9 @@ use std::env;
 use std::fs::File;
 
 use cli::{Action, Args};
+use extractor::{Archive, Vault};
 use notify::Msg;
 use types::{EzzError, EzzResult};
-use unpack::{Archive, Vault};
 
 fn main() {
     if let Err(e) = init_logger() {
