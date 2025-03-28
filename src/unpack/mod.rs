@@ -15,7 +15,7 @@ use platform::linux::explorer;
 #[cfg(target_os = "windows")]
 use platform::windows::{dialog::PasswordDialog, explorer};
 use sevenzz::Sevenzz;
-pub use vault::Vault;
+pub use vault::{Record, Vault, VaultData};
 
 impl Archive {
     pub fn extract(&self, pwd: Option<&str>, vault: &Vault) -> EzzResult<String> {
@@ -47,37 +47,65 @@ impl Archive {
     }
 
     fn extract_with_vault(&self, zz: &Sevenzz, vault: &Vault, inner: &str) -> EzzResult<String> {
-        let mut pairs = vault.parse()?;
-        for (idx, (freq, pwd)) in pairs.iter_mut().enumerate() {
-            match self.extract_with_pwd(zz, pwd, inner) {
-                Ok(result) => {
-                    *freq += 1;
-                    bubble_up(idx, &mut pairs);
-                    vault.save(&mut pairs)?;
-                    return Ok(result);
+        let mut data = vault.load()?;
+
+        type PasswordTestFn = fn(&Archive, &Sevenzz, &VaultData, &str) -> EzzResult<usize>;
+        let mut try_extract = |test_fn: PasswordTestFn| -> EzzResult<Option<String>> {
+            match test_fn(self, zz, &data, inner) {
+                Ok(num) => {
+                    zz.command_x(self, &data.records[num - 2].pwd)?;
+                    data.update(num);
+                    vault.save(&data)?;
+                    Ok(Some(flatten_dir(&self.derive_dir())?))
                 }
-                Err(EzzError::WrongPassword) => continue,
-                Err(e) => return Err(e),
+                Err(EzzError::NoMatchedPassword) => Ok(None),
+                Err(e) => Err(e),
             }
+        };
+
+        if let Some(result) = try_extract(Self::test_with_cache)? {
+            return Ok(result);
+        }
+        if let Some(result) = try_extract(Self::test_with_records)? {
+            return Ok(result);
         }
 
         #[cfg(target_os = "windows")]
         {
             if let Some(pwd) = PasswordDialog::ask_password()? {
                 let result = self.extract_with_pwd(zz, &pwd, inner)?;
-                pairs.push((1, pwd));
-                bubble_up(pairs.len() - 1, &mut pairs);
-                vault.save(&mut pairs)?;
-                Ok(result)
-            } else {
-                Err(EzzError::NoMatchedPassword)
+                data.records.push(Record { freq: 1, pwd });
+                data.update(data.records.len());
+                vault.save(&data)?;
+                return Ok(result);
             }
         }
 
-        #[cfg(target_os = "linux")]
-        {
-            Err(EzzError::NoMatchedPassword)
+        Err(EzzError::NoMatchedPassword)
+    }
+
+    fn test_with_cache(&self, zz: &Sevenzz, data: &VaultData, inner: &str) -> EzzResult<usize> {
+        for &num in &data.cache {
+            if let Some(Record { pwd, .. }) = data.records.get(num - 2) {
+                match zz.command_t(self, pwd, inner) {
+                    Ok(_) => return Ok(num),
+                    Err(EzzError::WrongPassword) => continue,
+                    Err(e) => return Err(e),
+                }
+            }
         }
+        Err(EzzError::NoMatchedPassword)
+    }
+
+    fn test_with_records(&self, zz: &Sevenzz, data: &VaultData, inner: &str) -> EzzResult<usize> {
+        for (idx, Record { pwd, .. }) in data.records.iter().enumerate() {
+            match zz.command_t(self, pwd, inner) {
+                Ok(_) => return Ok(idx + 2),
+                Err(EzzError::WrongPassword) => continue,
+                Err(e) => return Err(e),
+            }
+        }
+        Err(EzzError::NoMatchedPassword)
     }
 }
 
@@ -122,12 +150,4 @@ fn flatten_dir(dir: &Path) -> EzzResult<String> {
         }
     }
     Ok(result_name.into_owned())
-}
-
-fn bubble_up(index: usize, pairs: &mut [(u32, String)]) {
-    let mut i = index;
-    while i > 0 && pairs[i].0 >= pairs[i - 1].0 {
-        pairs.swap(i, i - 1);
-        i -= 1;
-    }
 }

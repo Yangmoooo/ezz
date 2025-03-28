@@ -74,6 +74,11 @@ fn run() -> EzzResult<String> {
         // 将密码添加到数据库，成功时返回空字符串，区别于解压得到的文件名
         Some(Action::Add { pwd, vault }) => {
             let vault = vault.map(Vault::new).unwrap_or_default();
+            if !vault.exists() {
+                vault.init()?;
+                info!("ezz {version} created vault: {vault:?}");
+            }
+
             vault.add(&pwd)?;
 
             notify!(Msg::Ok, "密码添加成功！\n保管库位于 {vault:?}");
@@ -95,6 +100,11 @@ fn run() -> EzzResult<String> {
 
             let archive = Archive::new(archive_path);
             let vault = vault_path.map(Vault::new).unwrap_or_default();
+            if !vault.exists() {
+                vault.init()?;
+                info!("ezz {version} created vault: {vault:?}");
+            }
+
             notify!(Msg::Info, "开始解压······\n正在处理文件 {archive:?}");
             info!("ezz {version} started, processing: {archive:?}");
 

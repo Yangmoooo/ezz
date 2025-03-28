@@ -26,8 +26,11 @@ pub enum EzzError {
     #[error("密码错误")]
     WrongPassword,
 
-    #[error("密码库中无匹配密码")]
+    #[error("无匹配密码")]
     NoMatchedPassword,
+
+    #[error("密码库格式错误")]
+    VaultError,
 
     #[error("文件路径或文件名错误")]
     PathError,
