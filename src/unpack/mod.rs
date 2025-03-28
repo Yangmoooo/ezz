@@ -20,7 +20,6 @@ pub use vault::{Record, Vault, VaultData};
 impl Archive {
     pub fn extract(&self, pwd: Option<&str>, vault: &Vault) -> EzzResult<String> {
         let zz = Sevenzz::construct_from_embed()?;
-
         let archive = if self.is_hidden {
             &self.reveal(&zz)?
         } else {
@@ -31,11 +30,17 @@ impl Archive {
         let file_name = if let Some(password) = pwd {
             archive.extract_with_pwd(&zz, password, &inner_file)?
         } else {
-            archive.extract_with_vault(&zz, vault, &inner_file)?
+            match archive.extract_with_pwd(&zz, "", &inner_file) {
+                Ok(name) => name,
+                Err(EzzError::WrongPassword) => {
+                    archive.extract_with_vault(&zz, vault, &inner_file)?
+                }
+                Err(e) => return Err(e),
+            }
         };
+
         archive.remove()?;
         explorer::refresh_dir(archive.get_parent()?.to_str().ok_or(EzzError::PathError)?);
-
         zz.deconstruct()?;
         Ok(file_name)
     }
@@ -83,7 +88,9 @@ impl Archive {
 
         Err(EzzError::NoMatchedPassword)
     }
+}
 
+impl Archive {
     fn test_with_cache(&self, zz: &Sevenzz, data: &VaultData, inner: &str) -> EzzResult<usize> {
         for &num in &data.cache {
             if let Some(Record { pwd, .. }) = data.records.get(num - 2) {
