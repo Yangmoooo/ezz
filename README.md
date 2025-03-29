@@ -6,7 +6,7 @@ A very light wrapper around [7-Zip](https://7-zip.org/), only supporting one-cli
 
 - 开箱即用，无多余操作
 - 一键无感运行，完成后显示桌面通知
-- 支持 7-Zip 的所有压缩格式，以及 [隐写者](https://github.com/cenglin123/SteganographierGUI) 和 [apate](https://github.com/rippod/apate) 的默认格式
+- 支持 7-Zip 的所有压缩格式，以及 [隐写者](https://github.com/cenglin123/SteganographierGUI) 和 [apate](https://github.com/rippod/apate) 格式
 - 提取至当前目录，自动整理 [目录结构](#关于目录结构)，并清理压缩包
 - 跨平台，支持 x86_64 架构 Windows 和 Linux
 
@@ -16,9 +16,10 @@ A very light wrapper around [7-Zip](https://7-zip.org/), only supporting one-cli
 
 完整组件包括：
 
-1. 可执行文件 `ezz.exe`（Linux 上为 `ezz`）
+1. 主程序 `ezz.exe`（如无说明，下文中均指该程序）
 2. 密码库文件 `ezz.vault`，未指定路径时将依次在程序目录和用户家目录下寻找
-3. 日志文件保存在程序目录下的 `ezz.log`（会自动创建）
+3. 日志文件保存在程序目录下的 `ezz.log`
+4. 用于还原 `apate` 格式的 `aletheia.exe`（详见 [关于 aletheia](#关于-aletheia)）
 
 ### 解手模式
 
@@ -26,8 +27,9 @@ A very light wrapper around [7-Zip](https://7-zip.org/), only supporting one-cli
 
 该模式使用默认密码库中的密码，若无匹配项则会弹出密码输入框
 
-- 密码库中每行表示一个密码条目
-- 一行由 `频率`、`分隔符` 和 `密码` 三部分组成
+- 密码库的第一行为缓存，包含了最近使用过的密码的行号
+- 其后的每一行表示一个密码条目
+- 密码条目由 `频率`、`分隔符` 和 `密码` 三部分组成
   1. `频率` 为该密码被使用的次数，由程序自动统计并排序
   2. `分隔符` 为**英文逗号**
   3. `密码` 为一串字符
@@ -35,9 +37,11 @@ A very light wrapper around [7-Zip](https://7-zip.org/), only supporting one-cli
 密码库示例如下：
 
 ```txt
+4 2 3
 23,Ao82s9jNk
 12,6$hu!,4
 9,i5l.6?rt07
+0,klsidu9
 ```
 
 若要给密码库添加新密码，只需在文件末尾添加一行，注意此时 `频率` 应该为 0
@@ -98,6 +102,14 @@ Options:
 由于 Windows 平台的模式设为了桌面程序（不会弹出终端窗口），导致其在终端不会有输出，包括 `--help` 和 `--version`，但程序可以正常接受参数并运行
 
 ## 🔔 Notice
+
+### 关于 aletheia
+
+`aletheia` 是一个独立的程序，专门用于还原 `apate` 伪装过的文件
+
+- 使用方法与 [解手模式](#解手模式) 相同，右键点击待处理的文件，选择用 `aletheia` 打开即可，或在终端中运行 `aletheia <FILE>`
+- 还原的速度一般很快，成功后会弹出桌面通知，若无通知则表示还原失败
+- 由于是为了配合处理压缩包而设计的，因此还原成功后会修改文件后缀名为 `.zip`，便于 `ezz` 进行解压
 
 ### 关于目录结构
 
