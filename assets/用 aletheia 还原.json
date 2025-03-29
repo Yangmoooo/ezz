@@ -1,0 +1,14 @@
+{
+    "title": "用 aletheia 还原",
+    "exe": "\"D:\\Develop\\Projects\\ezz\\target\\release\\aletheia.exe\"",
+    "param": "\"{path}\"",
+    "icon": "\"D:\\Develop\\Projects\\ezz\\target\\release\\aletheia.exe\",0",
+    "acceptDirectory": false,
+    "acceptDirectoryFlag": 0,
+    "acceptFile": false,
+    "acceptFileFlag": 3,
+    "acceptExts": ".mp4",
+    "acceptMultipleFilesFlag": 0,
+    "index": 1,
+    "showWindowFlag": 0
+}
