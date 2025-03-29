@@ -1,7 +1,6 @@
 mod archive;
 mod cleanup;
 mod platform;
-mod reveal;
 pub mod sevenzz;
 mod vault;
 
@@ -21,7 +20,10 @@ impl Archive {
     pub fn extract(&self, pwd: Option<&str>, vault: &Vault) -> EzzResult<String> {
         let zz = Sevenzz::construct_from_embed()?;
         let archive = if self.is_hidden {
-            &self.reveal(&zz)?
+            // 还原 Steganographier 的隐藏格式
+            zz.command_x_steganor(self)?;
+            self.remove()?;
+            &self.with_name("2.zip")
         } else {
             self
         };
