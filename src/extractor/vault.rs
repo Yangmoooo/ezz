@@ -20,17 +20,26 @@ pub struct VaultData {
 
 impl VaultData {
     pub fn update(&mut self, num: usize) {
-        let mut pos = num - 2;
-        self.records[pos].freq += 1;
-        while pos > 0 && self.records[pos].freq >= self.records[pos - 1].freq {
-            self.records.swap(pos, pos - 1);
-            pos -= 1;
+        // 更新 records
+        let (old, mut new) = (num - 2, num - 2);
+        self.records[old].freq += 1;
+        while new > 0 && self.records[new].freq >= self.records[new - 1].freq {
+            self.records.swap(new, new - 1);
+            new -= 1;
         }
-        if let Some(pos) = self.cache.iter().position(|&n| n == num) {
-            self.cache.remove(pos);
+        // 更新 cache
+        let mut pos = VAULT_CACHE_SIZE - 1;
+        for i in 0..VAULT_CACHE_SIZE {
+            let n = self.cache[i];
+            if n == num {
+                pos = i;
+            }
+            if new <= n - 2 && n - 2 < old {
+                self.cache[i] += 1;
+            }
         }
-        self.cache.insert(0, pos + 2);
-        self.cache.truncate(VAULT_CACHE_SIZE);
+        self.cache.remove(pos);
+        self.cache.insert(0, new + 2);
     }
 }
 
