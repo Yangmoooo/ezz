@@ -5,7 +5,7 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use std::{env, fs, vec};
 
-const VERSION: &str = "0.1.0"; // 修改时注意同步 workflow 中的附件名称
+const VERSION: &str = "0.1.1"; // 修改时注意同步 workflow 中的附件名称
 
 // apate 会将一个视频文件（称为面具）覆盖真实文件的开头
 // 被覆盖的部分会按字节反转后附加到文件末尾
@@ -45,11 +45,6 @@ fn main() {
         file.write_all(&buffer).unwrap();
     }
     file.set_len(data_len).unwrap();
-
-    let target = path.with_extension("zip");
-    if !target.exists() {
-        fs::rename(path, &target).unwrap();
-    }
 
     use notify_rust::{Notification, Timeout};
     let _ = Notification::new()
