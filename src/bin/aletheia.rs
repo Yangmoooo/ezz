@@ -3,7 +3,7 @@
 use std::fs::OpenOptions;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
-use std::{env, fs, vec};
+use std::{env, vec};
 
 const VERSION: &str = "0.1.1"; // 修改时注意同步 workflow 中的附件名称
 
