@@ -76,6 +76,6 @@ jobs:
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: target/${{ matrix.target }}/release/aletheia${{ matrix.extension }}
-          asset_name: aletheia-0.1.0-${{ matrix.platform }}${{ matrix.extension }}
+          asset_name: aletheia-0.1.1-${{ matrix.platform }}${{ matrix.extension }}
           tag: ${{ github.ref_name }}
         if: startsWith(github.ref_name, 'v') && github.ref_type == 'tag'
