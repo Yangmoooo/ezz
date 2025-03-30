@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.1] - 2025-03-30
+
+### Changed
+
+- `aletheia` 不再修改目标文件后缀名，后续应该不需要更新 `aletheia` 了
+
+### Fixed
+
+- 修复了密码库的缓存密码未正确更新的问题
+
 ## [2.0.0] - 2025-03-29
 
 ### Added
