@@ -33,13 +33,6 @@ jobs:
           args: --release --locked --bin ezz
           target: ${{ matrix.target }}
 
-      - name: Cargo build aletheia
-        uses: houseabsolute/actions-rust-cross@v0
-        with:
-          command: build
-          args: --release --locked --bin aletheia --features no_icon
-          target: ${{ matrix.target }}
-
       - name: Get version from tag
         id: get_version
         run: |
@@ -69,13 +62,4 @@ jobs:
           asset_name: ezz-${{ steps.get_version.outputs.version }}-${{ matrix.platform }}${{ matrix.extension }}
           tag: ${{ github.ref_name }}
           body: ${{ steps.changelog_entry.outputs.content }}
-        if: startsWith(github.ref_name, 'v') && github.ref_type == 'tag'
-
-      - name: Release aletheia
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: target/${{ matrix.target }}/release/aletheia${{ matrix.extension }}
-          asset_name: aletheia-0.1.1-${{ matrix.platform }}${{ matrix.extension }}
-          tag: ${{ github.ref_name }}
         if: startsWith(github.ref_name, 'v') && github.ref_type == 'tag'
