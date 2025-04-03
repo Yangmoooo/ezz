@@ -17,6 +17,9 @@ pub enum EzzError {
     #[error("{0}")]
     Trash(#[from] trash::Error),
 
+    #[error("{0}")]
+    NamedLock(#[from] named_lock::Error),
+
     #[error("7-Zip 退出码 {0:?}")]
     Sevenzip(ExitCode),
 

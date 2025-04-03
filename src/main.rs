@@ -8,6 +8,7 @@ mod notify;
 
 use clap::Parser;
 use log::{LevelFilter, error, info};
+use named_lock::NamedLock;
 use simplelog::{ConfigBuilder, WriteLogger, format_description};
 use std::env;
 use std::fs::File;
@@ -18,6 +19,25 @@ use notify::Msg;
 use types::{EzzError, EzzResult};
 
 fn main() {
+    let lock = match NamedLock::create("ezz") {
+        Ok(lock) => lock,
+        Err(e) => {
+            notify!(Msg::Err, "进程锁创建失败！\n{e:?}");
+            return;
+        }
+    };
+    let _guard = match lock.try_lock() {
+        Ok(guard) => guard,
+        Err(named_lock::Error::WouldBlock) => {
+            notify!(Msg::Err, "程序正在运行，请稍后再试！");
+            return;
+        }
+        Err(e) => {
+            notify!(Msg::Err, "进程锁定失败！\n{e:?}");
+            return;
+        }
+    };
+
     if let Err(e) = init_logger() {
         notify!(Msg::Err, "初始化日志失败！\n{e:?}");
         return;
@@ -26,7 +46,7 @@ fn main() {
     match run() {
         Ok(filename) => {
             if !filename.is_empty() {
-                notify!(Msg::Ok, "解压成功！\n已保存至：{filename}",);
+                notify!(Msg::Ok, "解压成功！\n已保存至：{filename}");
                 info!("Done. Saved to {filename:?}");
             }
         }
