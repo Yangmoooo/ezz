@@ -98,7 +98,7 @@ impl Sevenzz {
         let mut cmd = Command::new(&self.0);
         cmd.arg("x")
             .args([&output_switch, &pwd_switch])
-            .arg("-aoa")
+            .arg("-aot")
             .arg("-spe")
             .args(["-bso0", "-bsp0"])
             .args(["-sccUTF-8", "-scsUTF-8"])
@@ -115,7 +115,7 @@ impl Sevenzz {
         cmd.arg("x")
             .arg(&output_switch)
             .arg("-t#")
-            .arg("-aoa")
+            .arg("-aot")
             .args(["-bso0", "-bsp0"])
             .args(["-sccUTF-8", "-scsUTF-8"])
             .args([&video_name, "2.zip"]);
