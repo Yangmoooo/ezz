@@ -18,7 +18,8 @@ pub use vault::{Record, Vault, VaultData};
 
 impl Archive {
     pub fn extract(&self, pwd: Option<&str>, vault: &Vault) -> EzzResult<String> {
-        let zz = Sevenzz::construct_from_embed()?;
+        let zz = Sevenzz::initialize()?;
+
         let archive = if self.is_hidden {
             // 还原 Steganographier 的隐藏格式
             zz.command_x_steganor(self)?;
@@ -43,7 +44,6 @@ impl Archive {
 
         archive.remove()?;
         explorer::refresh_dir(archive.get_parent()?.to_str().ok_or(EzzError::PathError)?);
-        zz.deconstruct()?;
         Ok(file_name)
     }
 

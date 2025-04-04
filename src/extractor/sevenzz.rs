@@ -1,10 +1,9 @@
 use log::{error, info};
 use regex::Regex;
+use sha2::{Digest, Sha256};
 use std::env;
 use std::fmt;
-use std::fs::{self, File};
-use std::io::Write;
-use std::path::Path;
+use std::fs;
 use std::process::{Command, Output};
 
 use super::Archive;
@@ -43,22 +42,29 @@ impl TryFrom<i32> for ExitCode {
 pub struct Sevenzz(String);
 
 impl Sevenzz {
-    pub fn construct_from_embed() -> EzzResult<Self> {
-        let zz_path = env::current_exe()?.with_file_name(SEVENZZ);
-        if !zz_path.try_exists()? {
-            let mut sevenzz = File::create(&zz_path)?;
-            sevenzz.write_all(EMBEDDED_7Z)?;
-            set_exemode(&zz_path)?;
-        }
-        Ok(Self(zz_path.to_string_lossy().into_owned()))
-    }
+    pub fn initialize() -> EzzResult<Self> {
+        let zz_path = env::temp_dir().join(SEVENZZ);
 
-    pub fn deconstruct(&self) -> EzzResult<()> {
-        let zz_path = Path::new(&self.0);
+        let create_and_set = || -> EzzResult<()> {
+            fs::write(&zz_path, EMBEDDED_7Z)?;
+            Ok(set_exemode(&zz_path)?)
+        };
+
         if zz_path.try_exists()? {
-            fs::remove_file(zz_path)?;
+            let file_data = fs::read(&zz_path)?;
+            let file_hash = Sha256::digest(&file_data);
+            let embedded_hash = Sha256::digest(EMBEDDED_7Z);
+            info!("file hash: {file_hash:x?}");
+            info!("embedded hash: {embedded_hash:x?}");
+            if file_hash != embedded_hash {
+                fs::remove_file(&zz_path)?;
+                create_and_set()?;
+            }
+        } else {
+            create_and_set()?;
         }
-        Ok(())
+
+        Ok(Self(zz_path.to_string_lossy().into_owned()))
     }
 
     // 返回压缩包内第一个非目录文件以供测试，若压缩包文件名被加密，则返回空字符串
