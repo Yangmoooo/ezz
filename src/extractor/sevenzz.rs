@@ -54,8 +54,6 @@ impl Sevenzz {
             let file_data = fs::read(&zz_path)?;
             let file_hash = Sha256::digest(&file_data);
             let embedded_hash = Sha256::digest(EMBEDDED_7Z);
-            info!("file hash: {file_hash:x?}");
-            info!("embedded hash: {embedded_hash:x?}");
             if file_hash != embedded_hash {
                 fs::remove_file(&zz_path)?;
                 create_and_set()?;
