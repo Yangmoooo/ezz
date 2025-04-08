@@ -65,7 +65,7 @@ impl Sevenzz {
         Ok(Self(zz_path.to_string_lossy().into_owned()))
     }
 
-    // 返回压缩包内第一个非目录文件以供测试，若压缩包文件名被加密，则返回空字符串
+    // 返回压缩包内第一个非目录文件以供测试，若失败（如压缩包文件名被加密）则返回空字符串
     pub fn command_l(&self, archive: &Archive) -> EzzResult<String> {
         let archive_name = archive.get_path().to_string_lossy().into_owned();
         let mut cmd = Command::new(&self.0);
@@ -111,7 +111,7 @@ impl Sevenzz {
         check_torx_output(cmd.output()?, false)
     }
 
-    pub fn command_x_steganor(&self, video: &Archive) -> EzzResult<()> {
+    pub fn command_x_stegano(&self, video: &Archive) -> EzzResult<()> {
         let parent = video.get_parent()?;
         let output_switch = format!("-o{}", parent.to_string_lossy().into_owned());
         let video_name = video.get_path().to_string_lossy().into_owned();
@@ -129,18 +129,16 @@ impl Sevenzz {
 }
 
 fn find_first_file(output: Output) -> String {
-    if output.status.code() != Some(0) {
+    if !output.status.success() {
         return String::new();
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let re =
-        Regex::new(r"^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}) (.{5}) +(\d+) +(\d+|\s*) +(.+)$")
-            .unwrap();
+    let re = Regex::new(r"^(.{10}) (.{8}) (.{5}) +(\d+) +(\d*)  (.+)$").unwrap();
 
     let mut in_file_list = false;
     for line in stdout.lines() {
-        if line.starts_with("-------------------") {
+        if line.starts_with("------------------- -") {
             in_file_list = !in_file_list;
             continue;
         }
@@ -148,11 +146,9 @@ fn find_first_file(output: Output) -> String {
             continue;
         }
         if let Some(caps) = re.captures(line) {
-            if let (Some(attr), Some(size), Some(file_name)) =
-                (caps.get(3), caps.get(4), caps.get(6))
-            {
+            if let (Some(attr), Some(size), Some(name)) = (caps.get(3), caps.get(4), caps.get(6)) {
                 if !attr.as_str().starts_with('D') && size.as_str() != "0" {
-                    return file_name.as_str().trim().to_owned();
+                    return name.as_str().trim().to_owned();
                 }
             }
         }

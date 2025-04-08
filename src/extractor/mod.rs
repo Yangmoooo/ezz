@@ -20,9 +20,9 @@ impl Archive {
     pub fn extract(&self, pwd: Option<&str>, vault: &Vault) -> EzzResult<String> {
         let zz = Sevenzz::initialize()?;
 
-        let archive = if self.is_hidden {
+        let archive = if self.is_stegano {
             // 还原 Steganographier 的隐藏格式
-            zz.command_x_steganor(self)?;
+            zz.command_x_stegano(self)?;
             self.remove()?;
             &self.with_name("2.zip")
         } else {

@@ -15,7 +15,7 @@ pub enum VolumeType {
 pub struct Archive {
     path: PathBuf,
     pub volume: VolumeType,
-    pub is_hidden: bool,
+    pub is_stegano: bool, // 当文件后缀为 mp4 或 mkv 时，将作为 Steganographier 的隐写格式处理
 }
 
 impl Archive {
@@ -35,12 +35,12 @@ impl Archive {
             "zip" if path.with_extension("z01").exists() => VolumeType::Zip,
             _ => VolumeType::Single,
         };
-        let is_hidden = matches!(ext.to_ascii_lowercase().as_str(), "mp4" | "mkv");
+        let is_stegano = matches!(ext.to_ascii_lowercase().as_str(), "mp4" | "mkv");
 
         Self {
             path,
             volume,
-            is_hidden,
+            is_stegano,
         }
     }
 
@@ -55,7 +55,9 @@ impl Archive {
     pub fn get_parent(&self) -> EzzResult<&Path> {
         self.path.parent().ok_or(EzzError::PathError)
     }
+}
 
+impl Archive {
     pub fn derive_dir(&self) -> PathBuf {
         match self.volume {
             VolumeType::Single | VolumeType::Zip => self.path.with_extension(""),
