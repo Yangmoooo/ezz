@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+[ ] 支持同时传入多个压缩包，将依次处理
+
+## [2.0.2] - 2025-04-09
+
+### Changed
+
+- 内嵌的 7-Zip 不再释放到程序目录，而是释放到系统临时目录
+- 提取出的文件（夹）名在冲突时会重命名现有文件（夹），而非直接覆盖
+
+### Security
+
+- 引入独占机制，避免多个 `ezz` 实例同时运行导致并发冲突
+
 ## [2.0.1] - 2025-03-30
 
 ### Changed

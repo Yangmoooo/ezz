@@ -25,7 +25,7 @@ A very light wrapper around [7-Zip](https://7-zip.org/), only supporting one-cli
 
 右键点击待处理的文件，选择用本程序打开即可，配合 [Custom Context Menu](https://github.com/ikas-mc/ContextMenuForWindows11) 效果更佳
 
-该模式使用默认密码库中的密码，若无匹配项则会弹出密码输入框
+该模式使用默认密码库中的密码，若无匹配项则会弹出密码输入框（仅 Windows 平台）
 
 - 密码库的第一行为缓存，包含了最近使用过的密码的行号
 - 其后的每一行表示一个密码条目
@@ -120,7 +120,7 @@ Options:
 
 ### 关于 aletheia
 
-`aletheia` 是一个独立的程序，专门用于还原 `apate` 伪装过的文件
+`aletheia` 是一个独立的程序，专门用于还原 `apate` 伪装过的文件（目前最新版位于 [tag v2.0.1](https://github.com/Yangmoooo/ezz/releases/tag/v2.0.1)）
 
 - 使用方法与 `ezz` 基本相同，右键点击待处理的文件，选择用 `aletheia` 打开即可
 - 还原的速度一般很快，成功后会弹出桌面通知，若无通知则表示还原失败
