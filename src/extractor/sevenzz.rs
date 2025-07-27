@@ -79,7 +79,7 @@ impl Sevenzz {
     }
 
     pub fn command_t(&self, archive: &Archive, pwd: &str, inner: &str) -> EzzResult<()> {
-        let pwd_switch = format!("-p{}", pwd);
+        let pwd_switch = format!("-p{pwd}");
         let archive_name = archive.get_path().to_string_lossy().into_owned();
         let mut cmd = Command::new(&self.0);
         cmd.arg("t")
@@ -97,7 +97,7 @@ impl Sevenzz {
     pub fn command_x(&self, archive: &Archive, pwd: &str) -> EzzResult<()> {
         let dir = archive.derive_dir();
         let output_switch = format!("-o{}", dir.to_string_lossy().into_owned());
-        let pwd_switch = format!("-p{}", pwd);
+        let pwd_switch = format!("-p{pwd}");
         let archive_name = archive.get_path().to_string_lossy().into_owned();
         let mut cmd = Command::new(&self.0);
         cmd.arg("x")

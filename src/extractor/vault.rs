@@ -99,7 +99,7 @@ impl Vault {
     pub fn save(&self, data: &VaultData) -> EzzResult<()> {
         let mut writer = BufWriter::new(File::create(&self.0)?);
         for num in &data.cache {
-            write!(writer, "{} ", num)?;
+            write!(writer, "{num} ")?;
         }
         writeln!(writer)?;
         for Record { freq, pwd } in &data.records {

@@ -17,13 +17,11 @@ impl Archive {
 
     fn remove_multivolume(&self, seq: usize) -> EzzResult<()> {
         let generator: Box<dyn Fn(usize) -> PathBuf> = match self.volume {
-            VolumeType::Num => {
-                Box::new(|seq| self.get_path().with_extension(format!("{:03}", seq)))
-            }
+            VolumeType::Num => Box::new(|seq| self.get_path().with_extension(format!("{seq:03}"))),
             VolumeType::Rar => Box::new(|seq| {
                 self.get_path()
                     .with_extension("")
-                    .with_extension(format!("part{}.rar", seq))
+                    .with_extension(format!("part{seq}.rar"))
             }),
             VolumeType::Zip => {
                 Box::new(|seq| self.get_path().with_extension(format!("z{:02}", seq - 1)))
