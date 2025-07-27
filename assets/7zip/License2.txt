@@ -3,7 +3,7 @@
   License for use and distribution
   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-  7-Zip Copyright (C) 1999-2024 Igor Pavlov.
+  7-Zip Copyright (C) 1999-2025 Igor Pavlov.
 
   The licenses for 7zz and 7zzs files are:
 
