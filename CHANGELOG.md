@@ -11,6 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 [ ] 支持同时传入多个压缩包，将依次处理
 
+## [2.0.4] - 2025-08-15
+
+### Changed
+
+- 更新 7zip 到 25.01
+
+### Removed
+
+- 清除有关 `aletheia` 的内容
+
 ## [2.0.3] - 2025-07-28
 
 ### Changed
