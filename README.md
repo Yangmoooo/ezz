@@ -19,7 +19,6 @@ A very light wrapper around [7-Zip](https://7-zip.org/), only supporting one-cli
 1. 主程序 `ezz.exe`（如无说明，下文中均指该程序）
 2. 密码库文件 `ezz.vault`，未指定路径时将依次在程序目录和用户家目录下寻找
 3. 日志文件保存在程序目录下的 `ezz.log`
-4. 用于还原 `apate` 格式的 `aletheia.exe`（可选，详见 [关于 aletheia](#关于-aletheia)）
 
 ### 解手模式
 
@@ -117,13 +116,6 @@ Options:
 
 - 若压缩包中只包含 1 个文件（夹），则直接提取至当前目录
 - 否则将提取至与压缩包同名的文件夹中，并排除重复的根目录
-
-### 关于 aletheia
-
-`aletheia` 是一个独立的程序，专门用于还原 `apate` 伪装过的文件（目前最新版位于 [tag v2.0.1](https://github.com/Yangmoooo/ezz/releases/tag/v2.0.1)）
-
-- 使用方法与 `ezz` 基本相同，右键点击待处理的文件，选择用 `aletheia` 打开即可
-- 还原的速度一般很快，成功后会弹出桌面通知，若无通知则表示还原失败
 
 ### 关于 Custom Context Menu
 
