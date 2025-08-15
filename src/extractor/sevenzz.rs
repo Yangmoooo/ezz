@@ -145,12 +145,12 @@ fn find_first_file(output: Output) -> String {
         if !in_file_list {
             continue;
         }
-        if let Some(caps) = re.captures(line) {
-            if let (Some(attr), Some(size), Some(name)) = (caps.get(3), caps.get(4), caps.get(6)) {
-                if !attr.as_str().starts_with('D') && size.as_str() != "0" {
-                    return name.as_str().trim().to_owned();
-                }
-            }
+        if let Some(caps) = re.captures(line)
+            && let (Some(attr), Some(size), Some(name)) = (caps.get(3), caps.get(4), caps.get(6))
+            && !attr.as_str().starts_with('D')
+            && size.as_str() != "0"
+        {
+            return name.as_str().trim().to_owned();
         }
     }
     String::new()
