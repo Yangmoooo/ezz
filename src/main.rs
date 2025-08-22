@@ -22,36 +22,36 @@ fn main() {
     let lock = match NamedLock::create("ezz") {
         Ok(lock) => lock,
         Err(e) => {
-            notify!(Msg::Err, "进程锁创建失败！\n{e:?}");
+            notify!(Msg::Err, "Named lock creation failed!\n{e:?}");
             return;
         }
     };
     let _guard = match lock.try_lock() {
         Ok(guard) => guard,
         Err(named_lock::Error::WouldBlock) => {
-            notify!(Msg::Err, "程序正在运行，请稍后再试！");
+            notify!(Msg::Err, "Program is already running! Please try again later.");
             return;
         }
         Err(e) => {
-            notify!(Msg::Err, "进程锁定失败！\n{e:?}");
+            notify!(Msg::Err, "Named lock try to lock failed!\n{e:?}");
             return;
         }
     };
 
     if let Err(e) = init_logger() {
-        notify!(Msg::Err, "初始化日志失败！\n{e:?}");
+        notify!(Msg::Err, "Init logger failed!\n{e:?}");
         return;
     }
 
     match run() {
         Ok(filename) => {
             if !filename.is_empty() {
-                notify!(Msg::Ok, "解压成功！\n已保存至：{filename}");
+                notify!(Msg::Ok, "Extract successfully!\nSaved to: {filename}");
                 info!("Done. Saved to {filename:?}");
             }
         }
         Err(e) => {
-            notify!(Msg::Err, "解压失败！\n{e}");
+            notify!(Msg::Err, "Extract failed!\n{e}");
             match e {
                 EzzError::Io(e) => error!("I/O: {e:?}"),
                 EzzError::Log(e) => error!("Log: {e:?}"),
@@ -101,7 +101,7 @@ fn run() -> EzzResult<String> {
 
             wordlist.add(&password)?;
 
-            notify!(Msg::Ok, "密码添加成功！\n保管库位于 {wordlist:?}");
+            notify!(Msg::Ok, "Add password successfully!\nWordlist location: {wordlist:?}");
             info!("ezz {version} added password: {password:?} to {wordlist:?}");
 
             EzzResult::Ok("".to_string())
@@ -125,7 +125,7 @@ fn run() -> EzzResult<String> {
                 info!("ezz {version} created wordlist: {wordlist:?}");
             }
 
-            notify!(Msg::Info, "开始解压······\n正在处理文件 {archive:?}");
+            notify!(Msg::Info, "Start extracting......\nProcessing: {archive:?}");
             info!("ezz {version} started, processing: {archive:?}");
 
             archive.extract(password.as_deref(), &wordlist)

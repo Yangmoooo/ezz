@@ -20,22 +20,22 @@ pub enum EzzError {
     #[error("{0}")]
     NamedLock(#[from] named_lock::Error),
 
-    #[error("7-Zip 退出码 {0:?}")]
+    #[error("7-Zip ExitCode {0:?}.")]
     Sevenzip(ExitCode),
 
-    #[error("7-Zip 退出码无效")]
+    #[error("7-Zip ExitCode Invalid.")]
     InvalidExitCode,
 
-    #[error("密码错误")]
+    #[error("Wrong Password.")]
     WrongPassword,
 
-    #[error("无匹配密码")]
+    #[error("No Matched Password.")]
     NoMatchedPassword,
 
-    #[error("密码库格式错误")]
+    #[error("Wordlist Error.")]
     WordlistError,
 
-    #[error("文件路径或文件名错误")]
+    #[error("File Path Error.")]
     PathError,
 }
 
