@@ -17,12 +17,12 @@ A very light wrapper around [7-Zip](https://7-zip.org/), only supporting one-cli
 完整组件包括：
 
 1. 主程序 `ezz.exe`（如无说明，下文中均指该程序）
-2. 密码库文件 `ezz.vault`，未指定路径时将依次在程序目录和用户家目录下寻找
+2. 密码库文件 `.ezz.pw`，未指定路径时将依次在程序目录和用户家目录下寻找
 3. 日志文件保存在程序目录下的 `ezz.log`
 
 ### 解手模式
 
-右键点击待处理的文件，选择用本程序打开即可，配合 [Custom Context Menu](https://github.com/ikas-mc/ContextMenuForWindows11) 效果更佳
+右键点击待处理的文件，选择用本程序打开即可，配合 [Custom Context Menu](https://github.com/ikas-mc/ContextMenuForWindows11) 效果更佳。由于某些技术问题，仅支持同时运行一个实例。
 
 该模式使用默认密码库中的密码，若无匹配项则会弹出密码输入框（仅 Windows 平台）
 
@@ -64,7 +64,7 @@ Usage: ezz [FILE] [COMMAND]
 
 Commands:
   extract  e[X]tract an archive
-  add      [A]dd a password to the vault
+  add      [A]dd a password to the wordlist
   help     Print this message or the help of the given subcommand(s)
 
 Arguments:
@@ -81,21 +81,21 @@ Arguments:
   <FILE>  path to input file
 
 Options:
-  -p, --pwd <PASSWORD>  specify password
-      --vault <FILE>    path to password vault
-  -h, --help            Print help
-  -V, --version         Print version
+  -p, --password <PASSWORD>  specify password
+      --wordlist <FILE>      path to password wordlist
+  -h, --help                 Print help
+  -V, --version              Print version
 
 # 子命令 add (a)
 Usage: ezz add [OPTIONS] <PASSWORD>
 
 Arguments:
-  <PASSWORD>  password to adds
+  <PASSWORD>  password to add
 
 Options:
-      --vault <FILE>    path to password vault
-  -h, --help            Print help
-  -V, --version         Print version
+      --wordlist <FILE>    path to password wordlist
+  -h, --help               Print help
+  -V, --version            Print version
 ```
 
 由于 Windows 平台的模式设为了桌面程序（不会弹出终端窗口），导致其在终端不会有输出，包括 `--help` 和 `--version`，但程序可以正常接受参数并运行

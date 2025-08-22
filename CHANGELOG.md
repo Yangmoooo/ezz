@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 [ ] 支持同时传入多个压缩包，将依次处理
 
+## [2.0.5] - 2025-08-22
+
+### Changed
+
+- 密码库由 `ezz.vault` 变更为 `.ezz.pw`，需手动修改文件名
+- 调整了 Windows 平台的密码输入弹窗，Toast 通知变更为英文
+- 完善了 `ezz.exe` 在 Windows 上的程序信息
+
 ## [2.0.4] - 2025-08-15
 
 ### Changed
