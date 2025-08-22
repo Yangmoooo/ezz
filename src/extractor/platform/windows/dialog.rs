@@ -15,7 +15,7 @@ pub struct PasswordDialog {
     icon: nwg::Icon,
 
     #[nwg_control(
-        title: "ezz", center: true, size: (240, 120),
+        title: "Password Required", center: true, size: (240, 130),
         flags: "WINDOW|VISIBLE", icon: Some(&data.icon)
     )]
     #[nwg_events(
@@ -25,18 +25,18 @@ pub struct PasswordDialog {
     )]
     window: nwg::Window,
 
-    #[nwg_control(text: "输入密码：", position: (20, 15), size: (200, 20))]
+    #[nwg_control(text: "No correct password was found. Please enter it below.", position: (20, 12), size: (200, 40))]
     label: nwg::Label,
 
     // 如需隐藏输入内容，可设置属性 password: Some('*')
-    #[nwg_control(position: (20, 38), size: (200, 20), limit: 256, focus: true)]
+    #[nwg_control(position: (20, 55), size: (200, 20), limit: 256, focus: true)]
     pwd_input: nwg::TextInput,
 
-    #[nwg_control(text: "确定", position: (25, 72), size: (85, 30))]
+    #[nwg_control(text: "OK", position: (35, 87), size: (75, 28))]
     #[nwg_events( OnButtonClick: [PasswordDialog::on_ok] )]
     ok_btn: nwg::Button,
 
-    #[nwg_control(text: "取消", position: (130, 72), size: (85, 30))]
+    #[nwg_control(text: "Cancel", position: (130, 87), size: (75, 28))]
     #[nwg_events( OnButtonClick: [PasswordDialog::on_cancel] )]
     cancel_btn: nwg::Button,
 
@@ -48,8 +48,8 @@ impl PasswordDialog {
         nwg::init()?;
         let mut font = nwg::Font::default();
         nwg::Font::builder()
-            .size(12)
-            .family("宋体")
+            .size(16)
+            .family("Segoe UI")
             .build(&mut font)?;
         nwg::Font::set_global_default(Some(font));
 
