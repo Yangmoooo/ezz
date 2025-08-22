@@ -14,7 +14,7 @@ use std::env;
 use std::fs::File;
 
 use cli::{Action, Args};
-use extractor::{Archive, Vault};
+use extractor::{Archive, Wordlist};
 use notify::Msg;
 use types::{EzzError, EzzResult};
 
@@ -92,43 +92,43 @@ fn run() -> EzzResult<String> {
 
     match args.action {
         // 将密码添加到数据库，成功时返回空字符串，区别于解压得到的文件名
-        Some(Action::Add { pwd, vault }) => {
-            let vault = vault.map(Vault::new).unwrap_or_default();
-            if !vault.exists() {
-                vault.init()?;
-                info!("ezz {version} created vault: {vault:?}");
+        Some(Action::Add { password, wordlist }) => {
+            let wordlist = wordlist.map(Wordlist::new).unwrap_or_default();
+            if !wordlist.exists() {
+                wordlist.init()?;
+                info!("ezz {version} created wordlist: {wordlist:?}");
             }
 
-            vault.add(&pwd)?;
+            wordlist.add(&password)?;
 
-            notify!(Msg::Ok, "密码添加成功！\n保管库位于 {vault:?}");
-            info!("ezz {version} added password: {pwd:?} to {vault:?}");
+            notify!(Msg::Ok, "密码添加成功！\n保管库位于 {wordlist:?}");
+            info!("ezz {version} added password: {password:?} to {wordlist:?}");
 
             EzzResult::Ok("".to_string())
         }
         // 不使用子命令时，默认将传入的参数作为压缩文件路径进行提取
         _ => {
-            let (archive_path, pwd, vault_path) = match args.action {
+            let (archive_path, password, wordlist_path) = match args.action {
                 Some(Action::Extract {
                     archive,
-                    pwd,
-                    vault,
-                }) => (archive, pwd, vault),
+                    password,
+                    wordlist,
+                }) => (archive, password, wordlist),
                 None => (args.archive.ok_or(EzzError::PathError)?, None, None),
                 _ => unreachable!(),
             };
 
             let archive = Archive::new(archive_path);
-            let vault = vault_path.map(Vault::new).unwrap_or_default();
-            if !vault.exists() {
-                vault.init()?;
-                info!("ezz {version} created vault: {vault:?}");
+            let wordlist = wordlist_path.map(Wordlist::new).unwrap_or_default();
+            if !wordlist.exists() {
+                wordlist.init()?;
+                info!("ezz {version} created wordlist: {wordlist:?}");
             }
 
             notify!(Msg::Info, "开始解压······\n正在处理文件 {archive:?}");
             info!("ezz {version} started, processing: {archive:?}");
 
-            archive.extract(pwd.as_deref(), &vault)
+            archive.extract(password.as_deref(), &wordlist)
         }
     }
 }

@@ -26,22 +26,22 @@ pub enum Action {
 
         /// specify password
         #[arg(short, long, value_name = "PASSWORD")]
-        pwd: Option<String>,
+        password: Option<String>,
 
-        /// path to password vault
+        /// path to password list
         #[arg(long, value_name = "FILE")]
-        vault: Option<PathBuf>,
+        wordlist: Option<PathBuf>,
     },
 
     #[command(alias = "a")]
-    #[command(about = "[A]dd a password to the vault")]
+    #[command(about = "[A]dd a password to the wordlist")]
     Add {
         /// password to add
         #[arg(value_name = "PASSWORD")]
-        pwd: String,
+        password: String,
 
-        /// path to password vault
+        /// path to password list
         #[arg(long, value_name = "FILE")]
-        vault: Option<PathBuf>,
+        wordlist: Option<PathBuf>,
     },
 }

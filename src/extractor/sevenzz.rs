@@ -78,12 +78,12 @@ impl Sevenzz {
         Ok(find_first_file(cmd.output()?))
     }
 
-    pub fn command_t(&self, archive: &Archive, pwd: &str, inner: &str) -> EzzResult<()> {
-        let pwd_switch = format!("-p{pwd}");
+    pub fn command_t(&self, archive: &Archive, pw: &str, inner: &str) -> EzzResult<()> {
+        let pw_switch = format!("-p{pw}");
         let archive_name = archive.get_path().to_string_lossy().into_owned();
         let mut cmd = Command::new(&self.0);
         cmd.arg("t")
-            .arg(&pwd_switch)
+            .arg(&pw_switch)
             .args(["-bso0", "-bsp0"])
             .args(["-sccUTF-8", "-scsUTF-8"])
             .arg(&archive_name);
@@ -94,14 +94,14 @@ impl Sevenzz {
         check_torx_output(cmd.output()?, true)
     }
 
-    pub fn command_x(&self, archive: &Archive, pwd: &str) -> EzzResult<()> {
+    pub fn command_x(&self, archive: &Archive, pw: &str) -> EzzResult<()> {
         let dir = archive.derive_dir();
         let output_switch = format!("-o{}", dir.to_string_lossy().into_owned());
-        let pwd_switch = format!("-p{pwd}");
+        let pw_switch = format!("-p{pw}");
         let archive_name = archive.get_path().to_string_lossy().into_owned();
         let mut cmd = Command::new(&self.0);
         cmd.arg("x")
-            .args([&output_switch, &pwd_switch])
+            .args([&output_switch, &pw_switch])
             .arg("-aot")
             .arg("-spe")
             .args(["-bso0", "-bsp0"])

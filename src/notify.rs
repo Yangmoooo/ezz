@@ -19,7 +19,7 @@ macro_rules! notify {
             let _ = Notification::new()
                 .summary(&summary)
                 .body(&msg)
-                .timeout(Timeout::Milliseconds(4000))
+                .timeout(Timeout::Milliseconds(3000))
                 .show();
         }
     };

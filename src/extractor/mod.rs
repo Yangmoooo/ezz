@@ -2,7 +2,7 @@ mod archive;
 mod cleanup;
 mod platform;
 pub mod sevenzz;
-mod vault;
+mod wordlist;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -14,10 +14,10 @@ use platform::linux::explorer;
 #[cfg(target_os = "windows")]
 use platform::windows::{dialog::PasswordDialog, explorer};
 use sevenzz::Sevenzz;
-pub use vault::{Record, Vault, VaultData};
+pub use wordlist::{Record, Wordlist, WordlistData};
 
 impl Archive {
-    pub fn extract(&self, pwd: Option<&str>, vault: &Vault) -> EzzResult<String> {
+    pub fn extract(&self, pw: Option<&str>, wordlist: &Wordlist) -> EzzResult<String> {
         let zz = Sevenzz::initialize()?;
 
         let archive = if self.is_stegano {
@@ -30,13 +30,13 @@ impl Archive {
         };
 
         let inner_file = zz.command_l(archive)?;
-        let file_name = if let Some(password) = pwd {
-            archive.extract_with_pwd(&zz, password, &inner_file)?
+        let file_name = if let Some(password) = pw {
+            archive.extract_with_pw(&zz, password, &inner_file)?
         } else {
-            match archive.extract_with_pwd(&zz, "", &inner_file) {
+            match archive.extract_with_pw(&zz, "", &inner_file) {
                 Ok(name) => name,
                 Err(EzzError::WrongPassword) => {
-                    archive.extract_with_vault(&zz, vault, &inner_file)?
+                    archive.extract_with_wordlist(&zz, wordlist, &inner_file)?
                 }
                 Err(e) => return Err(e),
             }
@@ -47,22 +47,27 @@ impl Archive {
         Ok(file_name)
     }
 
-    fn extract_with_pwd(&self, zz: &Sevenzz, pwd: &str, inner: &str) -> EzzResult<String> {
-        zz.command_t(self, pwd, inner)?;
-        zz.command_x(self, pwd)?;
+    fn extract_with_pw(&self, zz: &Sevenzz, pw: &str, inner: &str) -> EzzResult<String> {
+        zz.command_t(self, pw, inner)?;
+        zz.command_x(self, pw)?;
         flatten_dir(&self.derive_dir())
     }
 
-    fn extract_with_vault(&self, zz: &Sevenzz, vault: &Vault, inner: &str) -> EzzResult<String> {
-        let mut data = vault.load()?;
+    fn extract_with_wordlist(
+        &self,
+        zz: &Sevenzz,
+        wordlist: &Wordlist,
+        inner: &str,
+    ) -> EzzResult<String> {
+        let mut data = wordlist.load()?;
 
-        type PasswordTestFn = fn(&Archive, &Sevenzz, &VaultData, &str) -> EzzResult<usize>;
+        type PasswordTestFn = fn(&Archive, &Sevenzz, &WordlistData, &str) -> EzzResult<usize>;
         let mut try_extract = |test_fn: PasswordTestFn| -> EzzResult<Option<String>> {
             match test_fn(self, zz, &data, inner) {
                 Ok(num) => {
-                    zz.command_x(self, &data.records[num - 2].pwd)?;
+                    zz.command_x(self, &data.records[num - 2].pw)?;
                     data.update(num);
-                    vault.save(&data)?;
+                    wordlist.save(&data)?;
                     Ok(Some(flatten_dir(&self.derive_dir())?))
                 }
                 Err(EzzError::NoMatchedPassword) => Ok(None),
@@ -79,11 +84,11 @@ impl Archive {
 
         #[cfg(target_os = "windows")]
         {
-            if let Some(pwd) = PasswordDialog::ask_password()? {
-                let result = self.extract_with_pwd(zz, &pwd, inner)?;
-                data.records.push(Record { freq: 1, pwd });
+            if let Some(pw) = PasswordDialog::ask_password()? {
+                let result = self.extract_with_pw(zz, &pw, inner)?;
+                data.records.push(Record { freq: 1, pw });
                 data.update(data.records.len());
-                vault.save(&data)?;
+                wordlist.save(&data)?;
                 return Ok(result);
             }
         }
@@ -93,10 +98,10 @@ impl Archive {
 }
 
 impl Archive {
-    fn test_with_cache(&self, zz: &Sevenzz, data: &VaultData, inner: &str) -> EzzResult<usize> {
+    fn test_with_cache(&self, zz: &Sevenzz, data: &WordlistData, inner: &str) -> EzzResult<usize> {
         for &num in &data.cache {
-            if let Some(Record { pwd, .. }) = data.records.get(num - 2) {
-                match zz.command_t(self, pwd, inner) {
+            if let Some(Record { pw, .. }) = data.records.get(num - 2) {
+                match zz.command_t(self, pw, inner) {
                     Ok(_) => return Ok(num),
                     Err(EzzError::WrongPassword) => continue,
                     Err(e) => return Err(e),
@@ -106,9 +111,14 @@ impl Archive {
         Err(EzzError::NoMatchedPassword)
     }
 
-    fn test_with_records(&self, zz: &Sevenzz, data: &VaultData, inner: &str) -> EzzResult<usize> {
-        for (idx, Record { pwd, .. }) in data.records.iter().enumerate() {
-            match zz.command_t(self, pwd, inner) {
+    fn test_with_records(
+        &self,
+        zz: &Sevenzz,
+        data: &WordlistData,
+        inner: &str,
+    ) -> EzzResult<usize> {
+        for (idx, Record { pw, .. }) in data.records.iter().enumerate() {
+            match zz.command_t(self, pw, inner) {
                 Ok(_) => return Ok(idx + 2),
                 Err(EzzError::WrongPassword) => continue,
                 Err(e) => return Err(e),

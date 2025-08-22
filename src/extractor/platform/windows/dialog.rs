@@ -30,7 +30,7 @@ pub struct PasswordDialog {
 
     // 如需隐藏输入内容，可设置属性 password: Some('*')
     #[nwg_control(position: (20, 55), size: (200, 20), limit: 256, focus: true)]
-    pwd_input: nwg::TextInput,
+    pw_input: nwg::TextInput,
 
     #[nwg_control(text: "OK", position: (35, 87), size: (75, 28))]
     #[nwg_events( OnButtonClick: [PasswordDialog::on_ok] )]
@@ -62,11 +62,11 @@ impl PasswordDialog {
     }
 
     fn init_controls(&self) {
-        self.pwd_input.set_focus();
+        self.pw_input.set_focus();
     }
 
     fn on_ok(&self) {
-        let password = self.pwd_input.text();
+        let password = self.pw_input.text();
         self.password.replace(Some(password));
         nwg::stop_thread_dispatch();
     }

@@ -33,7 +33,7 @@ pub enum EzzError {
     NoMatchedPassword,
 
     #[error("密码库格式错误")]
-    VaultError,
+    WordlistError,
 
     #[error("文件路径或文件名错误")]
     PathError,

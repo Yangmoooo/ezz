@@ -5,20 +5,20 @@ use std::{default, env, fmt};
 
 use crate::types::{EzzError, EzzResult};
 
-const VAULT_NAME: &str = "ezz.vault";
-const VAULT_CACHE_SIZE: usize = 3;
+const WORDLIST_NAME: &str = ".ezz.pw";
+const WORDLIST_CACHE_SIZE: usize = 3;
 
 pub struct Record {
     pub freq: u32,
-    pub pwd: String,
+    pub pw: String,
 }
 
-pub struct VaultData {
+pub struct WordlistData {
     pub cache: Vec<usize>,    // 最近使用过的密码行号，0 和 1 无效
     pub records: Vec<Record>, // 密码及其频率
 }
 
-impl VaultData {
+impl WordlistData {
     pub fn update(&mut self, num: usize) {
         // 更新 records
         let (old, mut new) = (num - 2, num - 2);
@@ -28,8 +28,8 @@ impl VaultData {
             new -= 1;
         }
         // 更新 cache
-        let mut pos = VAULT_CACHE_SIZE - 1;
-        for i in 0..VAULT_CACHE_SIZE {
+        let mut pos = WORDLIST_CACHE_SIZE - 1;
+        for i in 0..WORDLIST_CACHE_SIZE {
             let n = self.cache[i];
             if n == num {
                 pos = i;
@@ -43,9 +43,9 @@ impl VaultData {
     }
 }
 
-pub struct Vault(PathBuf);
+pub struct Wordlist(PathBuf);
 
-impl Vault {
+impl Wordlist {
     pub fn new<P: Into<PathBuf>>(path: P) -> Self {
         Self(path.into())
     }
@@ -60,63 +60,63 @@ impl Vault {
             .truncate(true)
             .write(true)
             .open(&self.0)?;
-        let content = ["0"; VAULT_CACHE_SIZE].join(" ") + "\n";
+        let content = ["0"; WORDLIST_CACHE_SIZE].join(" ") + "\n";
         file.write_all(content.as_bytes())?;
         Ok(())
     }
 
-    pub fn load(&self) -> EzzResult<VaultData> {
+    pub fn load(&self) -> EzzResult<WordlistData> {
         let mut lines = BufReader::new(File::open(&self.0)?)
             .lines()
             .map_while(Result::ok)
             .filter(|line| !line.is_empty());
         let cache: Vec<usize> = lines
             .next()
-            .ok_or(EzzError::VaultError)?
+            .ok_or(EzzError::WordlistError)?
             .split_whitespace()
             .filter_map(|num| num.parse::<usize>().ok())
-            .take(VAULT_CACHE_SIZE)
+            .take(WORDLIST_CACHE_SIZE)
             .collect::<Vec<usize>>();
         let records: Vec<Record> = lines
             .filter_map(|line| {
-                line.split_once(',').and_then(|(freq, pwd)| {
+                line.split_once(',').and_then(|(freq, pw)| {
                     freq.parse::<u32>().ok().map(|f| Record {
                         freq: f,
-                        pwd: pwd.to_string(),
+                        pw: pw.to_string(),
                     })
                 })
             })
             .collect();
-        Ok(VaultData { cache, records })
+        Ok(WordlistData { cache, records })
     }
 
-    pub fn add(&self, pwd: &str) -> EzzResult<()> {
+    pub fn add(&self, pw: &str) -> EzzResult<()> {
         let mut file = OpenOptions::new().append(true).open(&self.0)?;
-        writeln!(file, "0,{pwd}")?;
+        writeln!(file, "0,{pw}")?;
         Ok(())
     }
 
-    pub fn save(&self, data: &VaultData) -> EzzResult<()> {
+    pub fn save(&self, data: &WordlistData) -> EzzResult<()> {
         let mut writer = BufWriter::new(File::create(&self.0)?);
         for num in &data.cache {
             write!(writer, "{num} ")?;
         }
         writeln!(writer)?;
-        for Record { freq, pwd } in &data.records {
-            writeln!(writer, "{freq},{pwd}")?;
+        for Record { freq, pw } in &data.records {
+            writeln!(writer, "{freq},{pw}")?;
         }
         writer.flush()?;
         Ok(())
     }
 }
 
-impl default::Default for Vault {
+impl default::Default for Wordlist {
     fn default() -> Self {
-        let vault_path = env::current_exe()
+        let wordlist_path = env::current_exe()
             .ok()
             .and_then(|ezz_path| ezz_path.parent().map(|p| p.to_path_buf()))
             .and_then(|ezz_dir| {
-                let candidate = ezz_dir.join(VAULT_NAME);
+                let candidate = ezz_dir.join(WORDLIST_NAME);
                 if candidate.exists() {
                     Some(candidate)
                 } else {
@@ -125,7 +125,7 @@ impl default::Default for Vault {
             })
             .or_else(|| {
                 home::home_dir().and_then(|home_dir| {
-                    let candidate = home_dir.join(VAULT_NAME);
+                    let candidate = home_dir.join(WORDLIST_NAME);
                     if candidate.exists() {
                         Some(candidate)
                     } else {
@@ -135,11 +135,11 @@ impl default::Default for Vault {
             })
             .unwrap_or_default();
 
-        Vault::new(vault_path)
+        Wordlist::new(wordlist_path)
     }
 }
 
-impl fmt::Debug for Vault {
+impl fmt::Debug for Wordlist {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{:?}", self.0)
     }
