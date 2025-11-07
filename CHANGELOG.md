@@ -11,6 +11,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 [ ] 支持同时传入多个压缩包，将依次处理
 
+## [2.0.6] - 2025-11-08
+
+### Changed
+
+- 替换了下载到 `assets/` 的 7zz 二进制文件，改为使用由 [7zz-bin](https://github.com/Yangmoooo/7zz-bin) 提供的自动构建版本
+- Linux 平台改为 musl 版本，内置的 `7zz` 也使用了静态编译的 `7zzs`
+- 修改了 package 名称，`easy_unzip` -> `easy-unzip`
+
+### Removed
+
+- 移除了 `assets/` 中的 `7zz.exe` 和 `7zz`
+
 ## [2.0.5] - 2025-08-22
 
 ### Changed

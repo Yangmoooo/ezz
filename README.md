@@ -6,7 +6,7 @@ A very light wrapper around [7-Zip](https://7-zip.org/), only supporting one-cli
 
 - 开箱即用，无多余操作
 - 一键无感运行，完成后显示桌面通知
-- 支持 7-Zip 的所有压缩格式，以及 [隐写者](https://github.com/cenglin123/SteganographierGUI) 和 [apate](https://github.com/rippod/apate) 格式
+- 支持 7-Zip 的所有压缩格式，以及 [隐写者](https://github.com/cenglin123/SteganographierGUI) 格式
 - 提取至当前目录，自动整理 [目录结构](#关于目录结构)，并清理压缩包
 - 跨平台，支持 x86_64 架构 Windows 和 Linux
 
@@ -22,7 +22,7 @@ A very light wrapper around [7-Zip](https://7-zip.org/), only supporting one-cli
 
 ### 解手模式
 
-右键点击待处理的文件，选择用本程序打开即可，配合 [Custom Context Menu](https://github.com/ikas-mc/ContextMenuForWindows11) 效果更佳。由于某些技术问题，仅支持同时运行一个实例。
+右键点击待处理的文件，选择用本程序打开即可，配合 [Custom Context Menu](https://github.com/ikas-mc/ContextMenuForWindows11) 效果更佳。由于技术问题，仅支持同时运行一个实例。
 
 该模式使用默认密码库中的密码，若无匹配项则会弹出密码输入框（仅 Windows 平台）
 
@@ -53,7 +53,7 @@ ezz a <PASSWORD>
 
 ### 终端模式
 
-程序包含两个子命令：`extract` 和 `add`，分别用于提取压缩文件和向密码库中添加密码
+包含两个子命令：`extract` 和 `add`，分别用于提取压缩文件和向密码库中添加密码
 
 如果不指定子命令，默认会将传入的参数作为压缩文件路径执行 `extract`
 
@@ -100,11 +100,19 @@ Options:
 
 由于 Windows 平台的模式设为了桌面程序（不会弹出终端窗口），导致其在终端不会有输出，包括 `--help` 和 `--version`，但程序可以正常接受参数并运行
 
+## 🛠️ Build
+
+```sh
+cargo build --release
+```
+
+项目使用了 [7zz-bin](https://github.com/Yangmoooo/7zz-bin) 提供的 `7zz.exe` 和 `7zzs`，因此需要在构建时联网以下载对应平台的二进制文件，由于 GitHub API 的限制，如需多次构建，建议设置环境变量 `EZZ_GITHUB_TOKEN` 或 `GITHUB_TOKEN` 以使用个人访问令牌
+
 ## 🔔 Notice
 
 ### 关于分卷压缩包
 
-本程序支持标准风格的分卷：
+支持标准风格的分卷：
 
 - 形如 `.001`、`.002`、`.003` 的分卷（一般由 7-Zip 生成）
 - 形如 `.part1.rar`、`.part2.rar` 的分卷
@@ -117,6 +125,10 @@ Options:
 - 若压缩包中只包含 1 个文件（夹），则直接提取至当前目录
 - 否则将提取至与压缩包同名的文件夹中，并排除重复的根目录
 
+### 关于 Linux 支持
+
+在 x86_64 架构的 Linux 上能够正常运行，但 **不支持** 在密码库中未找到匹配密码时提供弹窗输入的功能。**曾经** 在 KDE 桌面环境下测试通过，但由于个人不再使用 Linux 桌面，现已不再保证对 Linux 的支持（欢迎反馈问题）
+
 ### 关于 Custom Context Menu
 
 作为一个 Portable App，本程序不会添加至 Windows 右键菜单
@@ -127,16 +139,11 @@ Options:
 
 ## ❤️ Thanks
 
-- 感谢 [7-Zip](https://www.7-zip.org/) 提供了强大的开源压缩工具
+- 感谢 [7-Zip](https://github.com/ip7z/7zip) 提供了强大的开源压缩工具
 - 感谢 [@cenglin123](https://github.com/cenglin123) 为探索可行的网盘保存方式所做出的大量实践和考证
 
 ## 📄 License
 
-7-Zip 的许可证构成较为复杂，详见附件 [Lisence1](./assets/License1.txt) 和 [Lisence2](./assets/License2.txt)
+7-Zip 的许可证构成较为复杂，详见 [7zip](./assets/7zip) 目录下的原始文档
 
-其主要的许可证是 [LGPL](https://www.gnu.org/licenses/lgpl-2.1.html)，而在本项目中：
-
-- Windows 版封装了通过 7-Zip [仓库](https://github.com/ip7z/7zip) 编译的 `7zz.exe`
-- Linux 版封装了 7-Zip [官网](https://7-zip.org/) 分发的 `7zz`
-
-因此本项目也遵循 LGPL 许可
+其主要的许可证是 [LGPL](https://www.gnu.org/licenses/lgpl-2.1.html)，而本项目通过 [7zz-bin](https://github.com/Yangmoooo/7zz-bin) 封装并分发了 7-Zip 的二进制文件，因此也遵循 LGPL 许可
