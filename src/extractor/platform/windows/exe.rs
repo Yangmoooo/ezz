@@ -3,7 +3,7 @@ use std::os::windows::process::CommandExt;
 use std::path::Path;
 use std::process::Command;
 
-pub const EMBEDDED_7Z: &[u8] = include_bytes!("../../../../assets/7zip/7zz.exe");
+pub const EMBEDDED_7Z: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/7zz.exe"));
 pub const SEVENZZ: &str = "7zz.exe";
 
 pub fn set_creation_flags(cmd: &mut Command) {
