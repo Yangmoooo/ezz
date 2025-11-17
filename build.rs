@@ -1,9 +1,14 @@
-use serde::Deserialize;
 use std::env;
 use std::error::Error;
-use std::fs::File;
+use std::ffi::OsStr;
+use std::fs::{self, File};
+use std::io::Cursor;
 use std::io::{Read, Write, copy};
 use std::path::{Path, PathBuf};
+
+use serde::Deserialize;
+use xz2::read::XzDecoder;
+use zip::ZipArchive;
 
 const SEVENZZ_REPO_OWNER: &str = "Yangmoooo";
 const SEVENZZ_REPO_NAME: &str = "7zz-bin";
@@ -31,17 +36,18 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 fn ensure_7zz_is_downloaded() -> Result<(), Box<dyn Error>> {
     let out_dir = env::var("OUT_DIR")?;
+    let out_dir_path = Path::new(&out_dir);
 
     let (asset_name, binary_name) = if cfg!(target_os = "windows") {
-        ("7zz-win-x64.exe", "7zz.exe")
+        ("7zz-windows-x64.zip", "7zz.exe")
     } else if cfg!(target_os = "linux") {
-        ("7zzs-linux-x64", "7zz")
+        ("7zz-linux-x64.tar.xz", "7zz")
     } else {
         panic!("Unsupported target OS for 7zz download.");
     };
 
-    let binary_path = Path::new(&out_dir).join(binary_name);
-    let version_path = Path::new(&out_dir).join("7zz.version");
+    let binary_path = out_dir_path.join(binary_name);
+    let version_path = out_dir_path.join("7zz.version");
 
     let mut client_builder = reqwest::blocking::Client::builder().user_agent("rust-build-script");
 
@@ -87,15 +93,26 @@ fn ensure_7zz_is_downloaded() -> Result<(), Box<dyn Error>> {
         .ok_or_else(|| {
             format!("Could not find asset matching '{asset_name}' in release '{latest_version}'")
         })?;
-    download_file(&asset.browser_download_url, &binary_path)?;
+
+    let archive_path = out_dir_path.join(asset_name);
+    download_file(&asset.browser_download_url, &archive_path)?;
+    println!(
+        "cargo:warning=Downloaded archive to {}",
+        archive_path.display()
+    );
+
+    extract_archive(&archive_path, &binary_path)?;
+    println!(
+        "cargo:warning=Extracted binary to {}",
+        binary_path.display()
+    );
+
+    fs::remove_file(&archive_path)?;
 
     let mut version_file = File::create(&version_path)?;
     version_file.write_all(latest_version.as_bytes())?;
 
-    println!(
-        "cargo:warning=Download of {} complete.",
-        binary_path.display()
-    );
+    println!("cargo:warning=Setup of {} complete.", binary_path.display());
     Ok(())
 }
 
@@ -105,8 +122,37 @@ fn download_file(url: &str, dest_path: &PathBuf) -> Result<(), Box<dyn Error>> {
         return Err(format!("Failed to download file: HTTP {}", response.status()).into());
     }
     let mut dest_file = File::create(dest_path)?;
-    let mut content = response;
-    copy(&mut content, &mut dest_file)?;
+    let content = response.bytes()?;
+    copy(&mut Cursor::new(content), &mut dest_file)?;
+    Ok(())
+}
+
+fn extract_archive(archive_path: &Path, dest_path: &Path) -> Result<(), Box<dyn Error>> {
+    if cfg!(target_os = "windows") {
+        let file = File::open(archive_path)?;
+        let mut archive = ZipArchive::new(file)?;
+        let mut bin_file = archive.by_name("7zz.exe")?;
+        let mut outfile = File::create(dest_path)?;
+        copy(&mut bin_file, &mut outfile)?;
+    } else if cfg!(target_os = "linux") {
+        let file = File::open(archive_path)?;
+        let xz = XzDecoder::new(file);
+        let mut tar_archive = tar::Archive::new(xz);
+        let mut found = false;
+        for entry in tar_archive.entries()? {
+            let mut entry = entry?;
+            if entry.path()?.file_name() == Some(OsStr::new("7zzs")) {
+                entry.unpack(dest_path)?;
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            return Err(format!("Could not find 7zzs in '{}'", archive_path.display()).into());
+        }
+    } else {
+        panic!("Unsupported target OS for archive extraction.");
+    };
     Ok(())
 }
 
