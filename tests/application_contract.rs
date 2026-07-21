@@ -1,34 +1,35 @@
-use ezz::{DesktopApplication, ExtractionError, FileOutcome};
+use ezz::{DesktopApplication, ExtractionError, ExtractionWorkflow, FileOutcome};
 
 #[test]
 fn every_input_produces_an_outcome_in_original_order() {
     let sandbox = tempfile::tempdir().expect("create test sandbox");
-    let unsupported = sandbox.path().join("plain.txt");
-    let missing = sandbox.path().join("missing.zip");
+    let first_missing = sandbox.path().join("first-missing.zip");
     let directory = sandbox.path().join("directory.7z");
-    std::fs::write(&unsupported, b"not an archive").expect("create unsupported input");
+    let second_missing = sandbox.path().join("second-missing.rar");
+    let seven_zip = sandbox.path().join("7zz");
     std::fs::create_dir(&directory).expect("create directory input");
 
-    let report = DesktopApplication::new().process_files([
-        unsupported.clone(),
-        missing.clone(),
+    let workflow = ExtractionWorkflow::new(seven_zip);
+    let report = DesktopApplication::new(workflow).process_files([
+        first_missing.clone(),
         directory.clone(),
+        second_missing.clone(),
     ]);
 
     assert_eq!(
         report.files,
         vec![
             FileOutcome {
-                input: unsupported.clone(),
-                result: Err(ExtractionError::UnsupportedInput(unsupported)),
-            },
-            FileOutcome {
-                input: missing.clone(),
-                result: Err(ExtractionError::InputNotFound(missing)),
+                input: first_missing.clone(),
+                result: Err(ExtractionError::InputNotFound(first_missing)),
             },
             FileOutcome {
                 input: directory.clone(),
                 result: Err(ExtractionError::InputNotFile(directory)),
+            },
+            FileOutcome {
+                input: second_missing.clone(),
+                result: Err(ExtractionError::InputNotFound(second_missing)),
             },
         ]
     );

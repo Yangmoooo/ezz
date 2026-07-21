@@ -1,3 +1,8 @@
+[workspace]
+members = ["xtask"]
+default-members = ["."]
+resolver = "3"
+
 [package]
 name = "ezz"
 version = "3.0.0"
@@ -8,10 +13,11 @@ name = "ezz"
 path = "src/main.rs"
 
 [dependencies]
-thiserror = "2"
-
-[dev-dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 tempfile = "3"
+thiserror = "2"
+trash = "5.2"
 
 [profile.release]
 lto = "fat"

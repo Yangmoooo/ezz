@@ -13,14 +13,13 @@ pub struct BatchReport {
     pub files: Vec<FileOutcome>,
 }
 
-#[derive(Debug, Default)]
 pub struct DesktopApplication {
     workflow: ExtractionWorkflow,
 }
 
 impl DesktopApplication {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(workflow: ExtractionWorkflow) -> Self {
+        Self { workflow }
     }
 
     pub fn process_files<I, P>(&self, inputs: I) -> BatchReport

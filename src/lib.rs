@@ -2,7 +2,12 @@
 compile_error!("ezz v3 only supports Windows and macOS");
 
 mod application;
+mod password_store;
+mod seven_zip;
 mod workflow;
 
 pub use application::{BatchReport, DesktopApplication, FileOutcome};
-pub use workflow::{ExtractionError, ExtractionOutcome, ExtractionWorkflow};
+pub use workflow::{
+    ExtractionError, ExtractionOutcome, ExtractionWarning, ExtractionWorkflow, PasswordPrompt,
+    PasswordResponse,
+};
