@@ -180,11 +180,7 @@ impl ExtractionWorkflow {
         let archive_set = resolve_archive_set(&selected_input)?;
         let input = &archive_set.primary;
         let seven_zip = SevenZip::new(&self.seven_zip);
-        match seven_zip.probe(input) {
-            Ok(()) | Err(ExtractionError::WrongPassword) => {}
-            Err(error) => return Err(error),
-        }
-        let password = self.resolve_password(&seven_zip, input)?;
+        let input_format = detect_input_format(&seven_zip, input)?;
 
         let parent = input.parent().ok_or_else(|| ExtractionError::FileSystem {
             operation: "resolve parent of",
@@ -199,7 +195,11 @@ impl ExtractionWorkflow {
         fs::create_dir(&extracted)
             .map_err(|error| file_system_error("create extraction directory", &extracted, error))?;
 
-        seven_zip.extract(input, &extracted, &password.value)?;
+        let prepared = workspace.path().join("prepared");
+        let archive_input = input_format.prepare(&seven_zip, input, &prepared)?;
+        let password = self.resolve_password(&seven_zip, &archive_input, &selected_input)?;
+
+        seven_zip.extract(&archive_input, &extracted, &password.value)?;
         validate_extracted_output(&extracted)?;
         let output = commit_output(input, &extracted)?;
         let sources = archive_set.sources;
@@ -230,9 +230,10 @@ impl ExtractionWorkflow {
     fn resolve_password(
         &self,
         seven_zip: &SevenZip,
-        input: &Path,
+        archive_input: &Path,
+        prompt_input: &Path,
     ) -> Result<ResolvedPassword, ExtractionError> {
-        match seven_zip.test_password(input, "") {
+        match seven_zip.test_password(archive_input, "") {
             Ok(()) => return Ok(ResolvedPassword::empty()),
             Err(ExtractionError::WrongPassword) => {}
             Err(error) => return Err(error),
@@ -247,7 +248,7 @@ impl ExtractionWorkflow {
                         message,
                     })?;
             for password in candidates {
-                match seven_zip.test_password(input, &password) {
+                match seven_zip.test_password(archive_input, &password) {
                     Ok(()) => {
                         return Ok(ResolvedPassword {
                             value: password,
@@ -265,12 +266,14 @@ impl ExtractionWorkflow {
         loop {
             let Some(response) = self
                 .password_prompt
-                .request_password(input, previous_attempt_failed)
+                .request_password(prompt_input, previous_attempt_failed)
             else {
-                return Err(ExtractionError::PasswordRequired(input.to_path_buf()));
+                return Err(ExtractionError::PasswordRequired(
+                    prompt_input.to_path_buf(),
+                ));
             };
 
-            match seven_zip.test_password(input, &response.password) {
+            match seven_zip.test_password(archive_input, &response.password) {
                 Ok(()) => {
                     return Ok(ResolvedPassword {
                         value: response.password,
@@ -285,19 +288,130 @@ impl ExtractionWorkflow {
     }
 }
 
+enum DetectedInputFormat {
+    RegularArchive,
+    Steganographier { embedded: PathBuf },
+}
+
+impl DetectedInputFormat {
+    fn prepare(
+        self,
+        seven_zip: &SevenZip,
+        input: &Path,
+        prepared: &Path,
+    ) -> Result<PathBuf, ExtractionError> {
+        match self {
+            Self::RegularArchive => Ok(input.to_path_buf()),
+            Self::Steganographier { embedded } => {
+                fs::create_dir(prepared).map_err(|error| {
+                    file_system_error("create special-format workspace", prepared, error)
+                })?;
+                let archive = seven_zip.extract_embedded_archive(input, prepared, &embedded)?;
+                validate_extracted_output(prepared)?;
+                if !archive.is_file() {
+                    return Err(ExtractionError::UnsupportedInput(input.to_path_buf()));
+                }
+                match seven_zip.probe(&archive) {
+                    Ok(()) | Err(ExtractionError::WrongPassword) => Ok(archive),
+                    Err(_) => Err(ExtractionError::UnsupportedInput(input.to_path_buf())),
+                }
+            }
+        }
+    }
+}
+
+trait InputFormatHandler {
+    fn detect(
+        &self,
+        seven_zip: &SevenZip,
+        input: &Path,
+    ) -> Result<Option<DetectedInputFormat>, ExtractionError>;
+}
+
+struct SteganographierHandler;
+
+impl InputFormatHandler for SteganographierHandler {
+    fn detect(
+        &self,
+        seven_zip: &SevenZip,
+        input: &Path,
+    ) -> Result<Option<DetectedInputFormat>, ExtractionError> {
+        let is_video = input
+            .extension()
+            .and_then(OsStr::to_str)
+            .is_some_and(|extension| {
+                extension.eq_ignore_ascii_case("mp4") || extension.eq_ignore_ascii_case("mkv")
+            });
+        if !is_video {
+            return Ok(None);
+        }
+
+        seven_zip.embedded_archive(input).map(|embedded| {
+            embedded.map(|embedded| DetectedInputFormat::Steganographier { embedded })
+        })
+    }
+}
+
+struct RegularArchiveHandler;
+
+impl InputFormatHandler for RegularArchiveHandler {
+    fn detect(
+        &self,
+        seven_zip: &SevenZip,
+        input: &Path,
+    ) -> Result<Option<DetectedInputFormat>, ExtractionError> {
+        match seven_zip.probe(input) {
+            Ok(()) | Err(ExtractionError::WrongPassword) => {
+                Ok(Some(DetectedInputFormat::RegularArchive))
+            }
+            Err(ExtractionError::UnsupportedInput(_)) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+}
+
+fn detect_input_format(
+    seven_zip: &SevenZip,
+    input: &Path,
+) -> Result<DetectedInputFormat, ExtractionError> {
+    let handlers: [&dyn InputFormatHandler; 2] = [&SteganographierHandler, &RegularArchiveHandler];
+    for handler in handlers {
+        if let Some(format) = handler.detect(seven_zip, input)? {
+            return Ok(format);
+        }
+    }
+    Err(ExtractionError::UnsupportedInput(input.to_path_buf()))
+}
+
 struct ArchiveSet {
     primary: PathBuf,
     sources: Vec<PathBuf>,
 }
 
 fn resolve_archive_set(selected: &Path) -> Result<ArchiveSet, ExtractionError> {
-    let Some(sequence) = numeric_extension(selected) else {
-        return Ok(ArchiveSet {
-            primary: selected.to_path_buf(),
-            sources: vec![selected.to_path_buf()],
-        });
-    };
+    if let Some(sequence) = numeric_extension(selected) {
+        return resolve_numeric_archive_set(selected, sequence);
+    }
+    if let Some(volume) = rar_volume_name(selected) {
+        return resolve_rar_archive_set(selected, &volume);
+    }
+    if let Some(sequence) = zip_volume_sequence(selected) {
+        return resolve_zip_archive_set(selected, Some(sequence));
+    }
+    if has_zip_extension(selected) {
+        return resolve_zip_archive_set(selected, None);
+    }
 
+    Ok(ArchiveSet {
+        primary: selected.to_path_buf(),
+        sources: vec![selected.to_path_buf()],
+    })
+}
+
+fn resolve_numeric_archive_set(
+    selected: &Path,
+    sequence: u32,
+) -> Result<ArchiveSet, ExtractionError> {
     let first = selected.with_extension("001");
     if !first.is_file() {
         return Err(ExtractionError::MissingVolume(first));
@@ -332,6 +446,162 @@ fn resolve_archive_set(selected: &Path) -> Result<ArchiveSet, ExtractionError> {
         primary: first,
         sources: volumes.into_values().collect(),
     })
+}
+
+struct RarVolumeName {
+    prefix: String,
+    sequence: u32,
+    width: usize,
+    extension: String,
+}
+
+fn resolve_rar_archive_set(
+    selected: &Path,
+    selected_volume: &RarVolumeName,
+) -> Result<ArchiveSet, ExtractionError> {
+    let parent = selected.parent().expect("absolute input parent");
+    let mut volumes = BTreeMap::new();
+    let entries = fs::read_dir(parent)
+        .map_err(|error| file_system_error("scan archive volumes in", parent, error))?;
+    for entry in entries {
+        let entry =
+            entry.map_err(|error| file_system_error("scan archive volume in", parent, error))?;
+        let path = entry.path();
+        if let Some(volume) = rar_volume_name(&path)
+            && volume.prefix == selected_volume.prefix
+            && volume
+                .extension
+                .eq_ignore_ascii_case(&selected_volume.extension)
+        {
+            volumes.insert(volume.sequence, path);
+        }
+    }
+
+    let last = volumes
+        .keys()
+        .next_back()
+        .copied()
+        .unwrap_or(selected_volume.sequence);
+    for number in 1..=last {
+        if !volumes.contains_key(&number) {
+            return Err(ExtractionError::MissingVolume(rar_volume_path(
+                parent,
+                selected_volume,
+                number,
+            )));
+        }
+    }
+
+    Ok(ArchiveSet {
+        primary: volumes.get(&1).expect("first RAR volume checked").clone(),
+        sources: volumes.into_values().collect(),
+    })
+}
+
+fn rar_volume_name(path: &Path) -> Option<RarVolumeName> {
+    let name = path.file_name()?.to_str()?;
+    let bytes = name.as_bytes();
+    if bytes.len() < 10 || !bytes[bytes.len() - 4..].eq_ignore_ascii_case(b".rar") {
+        return None;
+    }
+    let part = bytes[..bytes.len() - 4]
+        .windows(5)
+        .rposition(|window| window.eq_ignore_ascii_case(b".part"))?;
+    let digits = &name[part + 5..name.len() - 4];
+    if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+
+    Some(RarVolumeName {
+        prefix: name[..part].to_owned(),
+        sequence: digits.parse().ok()?,
+        width: digits.len(),
+        extension: name[name.len() - 3..].to_owned(),
+    })
+}
+
+fn rar_volume_path(parent: &Path, volume: &RarVolumeName, sequence: u32) -> PathBuf {
+    parent.join(format!(
+        "{}.part{:0width$}.{}",
+        volume.prefix,
+        sequence,
+        volume.extension,
+        width = volume.width
+    ))
+}
+
+fn resolve_zip_archive_set(
+    selected: &Path,
+    selected_sequence: Option<u32>,
+) -> Result<ArchiveSet, ExtractionError> {
+    let parent = selected.parent().expect("absolute input parent");
+    let stem = selected.file_stem().expect("volume file stem");
+    let mut volumes = BTreeMap::new();
+    let mut final_volume = None;
+    let entries = fs::read_dir(parent)
+        .map_err(|error| file_system_error("scan archive volumes in", parent, error))?;
+    for entry in entries {
+        let entry =
+            entry.map_err(|error| file_system_error("scan archive volume in", parent, error))?;
+        let path = entry.path();
+        if path.file_stem() != Some(stem) {
+            continue;
+        }
+        if let Some(sequence) = zip_volume_sequence(&path) {
+            volumes.insert(sequence, path);
+        } else if has_zip_extension(&path) {
+            final_volume = Some(path);
+        }
+    }
+
+    if selected_sequence.is_none() && volumes.is_empty() {
+        return Ok(ArchiveSet {
+            primary: selected.to_path_buf(),
+            sources: vec![selected.to_path_buf()],
+        });
+    }
+
+    let Some(final_volume) = final_volume else {
+        return Err(ExtractionError::MissingVolume(
+            selected.with_extension("zip"),
+        ));
+    };
+    let last = volumes
+        .keys()
+        .next_back()
+        .copied()
+        .or(selected_sequence)
+        .unwrap_or(0);
+    for number in 1..=last {
+        if !volumes.contains_key(&number) {
+            return Err(ExtractionError::MissingVolume(
+                selected.with_extension(format!("z{number:02}")),
+            ));
+        }
+    }
+
+    let mut sources: Vec<_> = volumes.into_values().collect();
+    sources.push(final_volume.clone());
+    Ok(ArchiveSet {
+        primary: final_volume,
+        sources,
+    })
+}
+
+fn zip_volume_sequence(path: &Path) -> Option<u32> {
+    let extension = path.extension()?.to_str()?;
+    let bytes = extension.as_bytes();
+    (bytes.len() == 3
+        && matches!(bytes[0], b'z' | b'Z')
+        && bytes[1..].iter().all(u8::is_ascii_digit))
+    .then(|| extension[1..].parse().ok())
+    .flatten()
+}
+
+fn has_zip_extension(path: &Path) -> bool {
+    path.extension()
+        .and_then(OsStr::to_str)
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("zip"))
 }
 
 fn numeric_extension(path: &Path) -> Option<u32> {
@@ -1025,6 +1295,194 @@ mod tests {
         );
     }
 
+    #[test]
+    #[ignore = "requires cargo xtask prepare"]
+    fn steganographier_mp4_extracts_its_embedded_zip() {
+        let seven_zip = prepared_seven_zip();
+        assert!(
+            seven_zip.is_file(),
+            "run `cargo xtask prepare` before this test"
+        );
+
+        let sandbox = tempfile::tempdir().expect("create test sandbox");
+        let payload = sandbox.path().join("hidden.txt");
+        let embedded = sandbox.path().join("embedded.zip");
+        let video = sandbox.path().join("carrier.mp4");
+        std::fs::write(&payload, b"hidden payload").expect("create hidden payload");
+        create_zip_archive(&seven_zip, sandbox.path(), &embedded, "hidden.txt");
+        std::fs::remove_file(&payload).expect("remove source payload");
+
+        let mut carrier = minimal_mp4();
+        carrier.extend(std::fs::read(&embedded).expect("read embedded ZIP"));
+        std::fs::write(&video, carrier).expect("create Steganographier MP4");
+        std::fs::remove_file(&embedded).expect("remove standalone embedded ZIP");
+
+        let outcome = ExtractionWorkflow::with_source_cleaner(&seven_zip, RemoveSource)
+            .extract(&video)
+            .expect("extract Steganographier MP4");
+
+        assert_eq!(outcome.output, payload);
+        assert_eq!(std::fs::read(&payload).unwrap(), b"hidden payload");
+        assert!(
+            !video.exists(),
+            "successful extraction must clean the video"
+        );
+    }
+
+    #[test]
+    #[ignore = "requires cargo xtask prepare"]
+    fn ordinary_mp4_is_rejected_without_modifying_the_source() {
+        let seven_zip = prepared_seven_zip();
+        assert!(
+            seven_zip.is_file(),
+            "run `cargo xtask prepare` before this test"
+        );
+
+        let sandbox = tempfile::tempdir().expect("create test sandbox");
+        let video = sandbox.path().join("ordinary.mp4");
+        std::fs::write(&video, minimal_mp4()).expect("create ordinary MP4");
+
+        let result =
+            ExtractionWorkflow::with_source_cleaner(&seven_zip, RemoveSource).extract(&video);
+
+        assert_eq!(
+            result,
+            Err(ExtractionError::UnsupportedInput(video.clone()))
+        );
+        assert!(video.is_file(), "ordinary video must be preserved");
+        assert_eq!(
+            std::fs::read_dir(sandbox.path()).unwrap().count(),
+            1,
+            "ordinary video must not create output or leave a workspace"
+        );
+    }
+
+    #[test]
+    #[ignore = "requires cargo xtask prepare"]
+    fn archive_with_an_mp4_extension_is_detected_by_content() {
+        let seven_zip = prepared_seven_zip();
+        assert!(
+            seven_zip.is_file(),
+            "run `cargo xtask prepare` before this test"
+        );
+
+        let sandbox = tempfile::tempdir().expect("create test sandbox");
+        let payload = sandbox.path().join("renamed.txt");
+        let archive = sandbox.path().join("renamed.mp4");
+        std::fs::write(&payload, b"renamed archive").expect("create payload");
+        create_zip_archive(&seven_zip, sandbox.path(), &archive, "renamed.txt");
+        std::fs::remove_file(&payload).expect("remove source payload");
+
+        let outcome = ExtractionWorkflow::with_source_cleaner(&seven_zip, RemoveSource)
+            .extract(&archive)
+            .expect("extract renamed ZIP");
+
+        assert_eq!(outcome.output, payload);
+        assert_eq!(std::fs::read(&payload).unwrap(), b"renamed archive");
+        assert!(
+            !archive.exists(),
+            "successful extraction must clean the source"
+        );
+    }
+
+    #[test]
+    #[ignore = "requires cargo xtask prepare"]
+    fn steganographier_mkv_extracts_its_embedded_zip() {
+        let seven_zip = prepared_seven_zip();
+        assert!(
+            seven_zip.is_file(),
+            "run `cargo xtask prepare` before this test"
+        );
+
+        let sandbox = tempfile::tempdir().expect("create test sandbox");
+        let payload = sandbox.path().join("mkv-hidden.txt");
+        let embedded = sandbox.path().join("mkv-embedded.zip");
+        let video = sandbox.path().join("carrier.mkv");
+        std::fs::write(&payload, b"MKV hidden payload").expect("create hidden payload");
+        create_zip_archive(&seven_zip, sandbox.path(), &embedded, "mkv-hidden.txt");
+        std::fs::remove_file(&payload).expect("remove source payload");
+
+        let mut carrier = minimal_mkv();
+        carrier.extend(std::fs::read(&embedded).expect("read embedded ZIP"));
+        std::fs::write(&video, carrier).expect("create Steganographier MKV");
+        std::fs::remove_file(&embedded).expect("remove standalone embedded ZIP");
+
+        let outcome = ExtractionWorkflow::with_source_cleaner(&seven_zip, RemoveSource)
+            .extract(&video)
+            .expect("extract Steganographier MKV");
+
+        assert_eq!(outcome.output, payload);
+        assert_eq!(std::fs::read(&payload).unwrap(), b"MKV hidden payload");
+        assert!(
+            !video.exists(),
+            "successful extraction must clean the video"
+        );
+    }
+
+    #[test]
+    #[ignore = "requires cargo xtask prepare"]
+    fn rar_non_first_volume_extracts_and_cleans_the_complete_set() {
+        let seven_zip = prepared_seven_zip();
+        assert!(
+            seven_zip.is_file(),
+            "run `cargo xtask prepare` before this test"
+        );
+
+        let sandbox = tempfile::tempdir().expect("create test sandbox");
+        let mut volumes = Vec::new();
+        for sequence in 1..=3 {
+            let name = format!("rar-multivolume.part{sequence}.rar");
+            let source = fixture(&name);
+            let destination = sandbox.path().join(&name);
+            std::fs::copy(source, &destination).expect("copy RAR volume fixture");
+            volumes.push(destination);
+        }
+
+        let outcome = ExtractionWorkflow::with_source_cleaner(&seven_zip, RemoveSource)
+            .extract(&volumes[1])
+            .expect("extract from second RAR volume");
+
+        let output = sandbox.path().join("LibarchiveAddingTest.html");
+        assert_eq!(outcome.output, output);
+        let content = std::fs::read(&output).expect("read extracted RAR content");
+        assert_eq!(content.len(), 20_111);
+        assert!(content.ends_with(b"</BODY>\n</HTML>"));
+        assert!(
+            volumes.iter().all(|volume| !volume.exists()),
+            "successful extraction must clean every RAR volume"
+        );
+    }
+
+    #[test]
+    #[ignore = "requires cargo xtask prepare"]
+    fn zip_non_first_volume_extracts_and_cleans_the_complete_set() {
+        let seven_zip = prepared_seven_zip();
+        assert!(
+            seven_zip.is_file(),
+            "run `cargo xtask prepare` before this test"
+        );
+
+        let sandbox = tempfile::tempdir().expect("create test sandbox");
+        let first = sandbox.path().join("zip-multivolume.z01");
+        let final_volume = sandbox.path().join("zip-multivolume.zip");
+        std::fs::copy(fixture("zip-multivolume.z01"), &first)
+            .expect("copy first ZIP volume fixture");
+        std::fs::copy(fixture("zip-multivolume.zip"), &final_volume)
+            .expect("copy final ZIP volume fixture");
+
+        let outcome = ExtractionWorkflow::with_source_cleaner(&seven_zip, RemoveSource)
+            .extract(&first)
+            .expect("extract from first ZIP split volume");
+
+        let output = sandbox.path().join("zip-volume-payload.txt");
+        assert_eq!(outcome.output, output);
+        let content = std::fs::read(&output).expect("read extracted ZIP content");
+        assert_eq!(content.len(), 70_000);
+        assert!(content.starts_with(b"ezz zip volume payload\n"));
+        assert!(!first.exists(), "first ZIP volume must be cleaned");
+        assert!(!final_volume.exists(), "final ZIP volume must be cleaned");
+    }
+
     fn create_archive(seven_zip: &Path, directory: &Path, archive: &Path, inputs: &[&str]) {
         let mut command = Command::new(seven_zip);
         command
@@ -1056,6 +1514,32 @@ mod tests {
         assert!(status.success(), "7-Zip must create encrypted test archive");
     }
 
+    fn create_zip_archive(seven_zip: &Path, directory: &Path, archive: &Path, input: &str) {
+        let status = Command::new(seven_zip)
+            .current_dir(directory)
+            .args(["a", "-tzip"])
+            .arg(archive)
+            .arg(input)
+            .args(["-mx=1", "-bso0", "-bsp0"])
+            .status()
+            .expect("create ZIP with 7-Zip");
+        assert!(status.success(), "7-Zip must create the embedded ZIP");
+    }
+
+    fn minimal_mp4() -> Vec<u8> {
+        vec![
+            0, 0, 0, 24, b'f', b't', b'y', b'p', b'i', b's', b'o', b'm', 0, 0, 2, 0, b'i', b's',
+            b'o', b'm', b'm', b'p', b'4', b'2', 0, 0, 0, 8, b'f', b'r', b'e', b'e',
+        ]
+    }
+
+    fn minimal_mkv() -> Vec<u8> {
+        vec![
+            0x1a, 0x45, 0xdf, 0xa3, 0x8f, 0x42, 0x86, 0x81, 0x01, 0x42, 0xf7, 0x81, 0x01, 0x42,
+            0xf2, 0x81, 0x04,
+        ]
+    }
+
     fn create_split_archive(seven_zip: &Path, directory: &Path, archive: &Path, input: &str) {
         let status = Command::new(seven_zip)
             .current_dir(directory)
@@ -1079,5 +1563,12 @@ mod tests {
             .join("ezz-tools")
             .join("26.02")
             .join(binary_name)
+    }
+
+    fn fixture(name: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join(name)
     }
 }
