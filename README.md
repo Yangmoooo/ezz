@@ -2,6 +2,9 @@
 
 A very light wrapper around [7-Zip](https://7-zip.org/), only supporting one-click extraction
 
+> [!NOTE]
+> 当前 README 描述 v2。已经确认的 v3 重构基线见 [docs/v3-design.md](./docs/v3-design.md)。
+
 ## ⭐ Features
 
 - 开箱即用，无多余操作
