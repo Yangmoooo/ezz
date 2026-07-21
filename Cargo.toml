@@ -1,41 +1,17 @@
 [package]
-name = "easy-unzip"
-version = "2.0.6"
+name = "ezz"
+version = "3.0.0"
 edition = "2024"
-build = "build.rs"
 
 [[bin]]
 name = "ezz"
 path = "src/main.rs"
 
 [dependencies]
-clap = { version = "4.5", features = ["derive", "unicode"] }
 thiserror = "2"
-log = "0.4"
-simplelog = "0.12"
-notify-rust = "4"
-home = "0.5"
-regex = "1.12"
-time = "0.3"
-trash = "5.2"
-named-lock = "0.4"
-sha2 = "0.10"
 
-[target.'cfg(windows)'.dependencies]
-native-windows-gui = { version = "1.0", features = ["high-dpi"] }
-native-windows-derive = "1.0"
-windows = { version = "0.62", features = ["Win32_UI_Shell"] }
-
-[build-dependencies]
-reqwest = { version = "0.12", features = ["blocking", "json"] }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-zip = "6"
-tar = "0.4"
-xz2 = "0.1"
-
-[target.'cfg(windows)'.build-dependencies]
-winres = "0.1"
+[dev-dependencies]
+tempfile = "3"
 
 [profile.release]
 lto = "fat"
