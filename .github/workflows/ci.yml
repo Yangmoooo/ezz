@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  RUSTFLAGS: --deny warnings
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Check on ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            platform: macos-arm64
+          - os: windows-latest
+            platform: windows-x64
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Verify macOS runner architecture
+        if: runner.os == 'macOS'
+        shell: bash
+        run: test "$(uname -m)" = "arm64"
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Prepare fixed 7-Zip
+        run: cargo xtask prepare
+
+      - name: Check
+        run: cargo check --workspace --all-targets --locked --verbose
+
+      - name: Run tests
+        run: cargo test --workspace --all-targets --locked --verbose
+
+      - name: Run real 7-Zip end-to-end tests
+        run: cargo test --lib --locked -- --ignored
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
