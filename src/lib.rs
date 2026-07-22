@@ -1,4 +1,7 @@
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+#[cfg(not(any(
+    all(target_os = "windows", target_arch = "x86_64"),
+    all(target_os = "macos", target_arch = "aarch64")
+)))]
 compile_error!("ezz v3 only supports Windows and macOS");
 
 mod application;

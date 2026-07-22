@@ -201,7 +201,7 @@ impl ExtractionWorkflow {
 
         seven_zip.extract(&archive_input, &extracted, &password.value)?;
         validate_extracted_output(&extracted)?;
-        let output = commit_output(input, &extracted)?;
+        let output = commit_output(input, &extracted, &archive_set.output_stem)?;
         let sources = archive_set.sources;
         let mut warnings = Vec::new();
         if password.remember
@@ -386,6 +386,7 @@ fn detect_input_format(
 struct ArchiveSet {
     primary: PathBuf,
     sources: Vec<PathBuf>,
+    output_stem: OsString,
 }
 
 fn resolve_archive_set(selected: &Path) -> Result<ArchiveSet, ExtractionError> {
@@ -405,6 +406,7 @@ fn resolve_archive_set(selected: &Path) -> Result<ArchiveSet, ExtractionError> {
     Ok(ArchiveSet {
         primary: selected.to_path_buf(),
         sources: vec![selected.to_path_buf()],
+        output_stem: archive_stem(selected),
     })
 }
 
@@ -445,6 +447,7 @@ fn resolve_numeric_archive_set(
     Ok(ArchiveSet {
         primary: first,
         sources: volumes.into_values().collect(),
+        output_stem: archive_stem(&selected.with_extension("")),
     })
 }
 
@@ -495,6 +498,7 @@ fn resolve_rar_archive_set(
     Ok(ArchiveSet {
         primary: volumes.get(&1).expect("first RAR volume checked").clone(),
         sources: volumes.into_values().collect(),
+        output_stem: OsString::from(&selected_volume.prefix),
     })
 }
 
@@ -558,6 +562,7 @@ fn resolve_zip_archive_set(
         return Ok(ArchiveSet {
             primary: selected.to_path_buf(),
             sources: vec![selected.to_path_buf()],
+            output_stem: archive_stem(selected),
         });
     }
 
@@ -585,7 +590,14 @@ fn resolve_zip_archive_set(
     Ok(ArchiveSet {
         primary: final_volume,
         sources,
+        output_stem: archive_stem(selected),
     })
+}
+
+fn archive_stem(path: &Path) -> OsString {
+    path.file_stem()
+        .unwrap_or_else(|| OsStr::new("archive"))
+        .to_os_string()
 }
 
 fn zip_volume_sequence(path: &Path) -> Option<u32> {
@@ -692,7 +704,11 @@ fn absolute_path(path: &Path) -> Result<PathBuf, ExtractionError> {
         .map_err(|error| file_system_error("resolve absolute path for", path, error))
 }
 
-fn commit_output(input: &Path, extracted: &Path) -> Result<PathBuf, ExtractionError> {
+fn commit_output(
+    input: &Path,
+    extracted: &Path,
+    output_stem: &OsStr,
+) -> Result<PathBuf, ExtractionError> {
     remove_platform_metadata(extracted)?;
     let mut entries = fs::read_dir(extracted)
         .map_err(|error| file_system_error("read extracted contents from", extracted, error))?
@@ -712,10 +728,7 @@ fn commit_output(input: &Path, extracted: &Path) -> Result<PathBuf, ExtractionEr
         }
         _ => {
             let parent = input.parent().expect("validated input parent");
-            let name = input
-                .file_stem()
-                .unwrap_or_else(|| std::ffi::OsStr::new("archive"));
-            let target = unique_directory_destination(parent, name);
+            let target = unique_directory_destination(parent, output_stem);
             fs::rename(extracted, &target)
                 .map_err(|error| file_system_error("commit extracted output to", &target, error))?;
             Ok(target)
@@ -1297,6 +1310,47 @@ mod tests {
 
     #[test]
     #[ignore = "requires cargo xtask prepare"]
+    fn numeric_volume_uses_the_logical_archive_name_for_multiple_outputs() {
+        let seven_zip = prepared_seven_zip();
+        assert!(
+            seven_zip.is_file(),
+            "run `cargo xtask prepare` before this test"
+        );
+
+        let sandbox = tempfile::tempdir().expect("create test sandbox");
+        let first_payload = sandbox.path().join("first.bin");
+        let second_payload = sandbox.path().join("second.bin");
+        let archive = sandbox.path().join("bundle.7z");
+        std::fs::write(&first_payload, vec![0x31; 2 * 1024]).expect("create first payload");
+        std::fs::write(&second_payload, vec![0x32; 2 * 1024]).expect("create second payload");
+        create_split_archive_with_inputs(
+            &seven_zip,
+            sandbox.path(),
+            &archive,
+            &["first.bin", "second.bin"],
+        );
+        std::fs::remove_file(&first_payload).expect("remove first source payload");
+        std::fs::remove_file(&second_payload).expect("remove second source payload");
+        let selected = sandbox.path().join("bundle.7z.002");
+
+        let outcome = ExtractionWorkflow::with_source_cleaner(&seven_zip, RemoveSource)
+            .extract(&selected)
+            .expect("extract multiple files from a non-first volume");
+
+        let output = sandbox.path().join("bundle");
+        assert_eq!(outcome.output, output);
+        assert_eq!(
+            std::fs::read(output.join("first.bin")).unwrap(),
+            vec![0x31; 2 * 1024]
+        );
+        assert_eq!(
+            std::fs::read(output.join("second.bin")).unwrap(),
+            vec![0x32; 2 * 1024]
+        );
+    }
+
+    #[test]
+    #[ignore = "requires cargo xtask prepare"]
     fn steganographier_mp4_extracts_its_embedded_zip() {
         let seven_zip = prepared_seven_zip();
         assert!(
@@ -1541,11 +1595,20 @@ mod tests {
     }
 
     fn create_split_archive(seven_zip: &Path, directory: &Path, archive: &Path, input: &str) {
+        create_split_archive_with_inputs(seven_zip, directory, archive, &[input]);
+    }
+
+    fn create_split_archive_with_inputs(
+        seven_zip: &Path,
+        directory: &Path,
+        archive: &Path,
+        inputs: &[&str],
+    ) {
         let status = Command::new(seven_zip)
             .current_dir(directory)
             .args(["a", "-t7z"])
             .arg(archive)
-            .arg(input)
+            .args(inputs)
             .args(["-v1k", "-mx=0", "-bso0", "-bsp0"])
             .status()
             .expect("create split archive with 7-Zip");
