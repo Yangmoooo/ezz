@@ -1,152 +1,130 @@
 # ezz
 
-A very light wrapper around [7-Zip](https://7-zip.org/), only supporting one-click extraction
+ezz 是一个无主窗口的桌面解压工具。它从 Finder 或 Windows 资源管理器接收文件，使用随应用发布的固定版本 7-Zip，依次完成格式识别、密码尝试、事务式解压、目录整理和原归档清理。
 
-> [!NOTE]
-> 当前 README 描述 v2。已经确认的 v3 重构基线见 [docs/v3-design.md](./docs/v3-design.md)。
+v3 不提供命令行接口、主窗口、任务列表或持久化设置。
 
-## ⭐ Features
+## 支持平台
 
-- 开箱即用，无多余操作
-- 一键无感运行，完成后显示桌面通知
-- 支持 7-Zip 的所有压缩格式，以及 [隐写者](https://github.com/cenglin123/SteganographierGUI) 格式
-- 提取至当前目录，自动整理 [目录结构](#关于目录结构)，并清理压缩包
-- 跨平台，支持 x86_64 架构 Windows 和 Linux
+| 平台 | 架构 | 最低版本 | 发布格式 |
+| --- | --- | --- | --- |
+| macOS | Apple Silicon (`arm64`) | macOS 11 | ZIP 中的 `ezz.app` |
+| Windows | x64 | Windows 10 | Portable ZIP |
 
-<img src="./assets/whatever.jpg" alt="我管你这的那的" width="60%" />
+Linux、macOS Intel、Windows ARM 和 macOS 10.x 不属于 v3 支持范围。v2 的 tag 和历史发布会保留，但不再维护。
 
-## 💡 Usage
+## 主要能力
 
-完整组件包括：
+- 通过内容而非文件扩展名识别 7-Zip 支持的归档，修改过后缀的归档也可通过文件选择器打开。
+- 支持 Steganographier 生成的 MP4/MKV；普通视频只读探测后会被拒绝，不会产生输出或清理源文件。
+- 支持一次打开多个文件并严格顺序处理，单个失败不会中断后续文件。
+- 可从任意数字分卷、`.partN.rar` 或 `.zNN` 分卷开始，自动定位首卷并在成功后清理完整分卷集合。
+- 支持无密码、内容加密和文件名加密归档，并可在原生密码弹窗中重试。
+- 只在归档旁的隐藏临时目录中解压；验证完整结果后才提交，不覆盖或合并已有文件。
+- 成功后将原归档移入废纸篓或回收站，绝不永久删除。清理失败只产生警告，不撤销已提交结果。
 
-1. 主程序 `ezz.exe`（如无说明，下文中均指该程序）
-2. 密码库文件 `.ezz.pw`，未指定路径时将依次在程序目录和用户家目录下寻找
-3. 日志文件保存在程序目录下的 `ezz.log`
+## 安装
 
-### 解手模式
+### macOS
 
-右键点击待处理的文件，选择用本程序打开即可，配合 [Custom Context Menu](https://github.com/ikas-mc/ContextMenuForWindows11) 效果更佳。由于技术问题，仅支持同时运行一个实例。
+1. 下载 `ezz-<版本>-macos-arm64.zip` 并解压。
+2. 将 `ezz.app` 移到“应用程序”目录。
+3. 首次运行时在 Finder 中右键点击 `ezz.app`，选择“打开”，再确认打开。
 
-该模式使用默认密码库中的密码，若无匹配项则会弹出密码输入框（仅 Windows 平台）
-
-- 密码库的第一行为缓存，包含了最近使用过的密码的行号
-- 其后的每一行表示一个密码条目
-- 密码条目由 `频率`、`分隔符` 和 `密码` 三部分组成
-  1. `频率` 为该密码被使用的次数，由程序自动统计并排序
-  2. `分隔符` 为**英文逗号**
-  3. `密码` 为一串字符
-
-密码库示例如下：
-
-```txt
-4 2 3
-23,Ao82s9jNk
-12,6$hu!,4
-9,i5l.6?rt07
-0,klsidu9
-```
-
-若要给密码库添加新密码，只需在文件末尾添加一行，注意此时 `频率` 应该为 0
-
-也可在命令行中添加密码：
+首发版本使用 ad-hoc 签名，没有 Apple Developer ID 签名和公证。如果右键打开仍被拦截，可在“系统设置 > 隐私与安全性”中选择“仍要打开”。最后的手动方案是：
 
 ```sh
-ezz a <PASSWORD>
+xattr -dr com.apple.quarantine /Applications/ezz.app
 ```
 
-### 终端模式
+放行只需要完成一次。请只对从本项目 GitHub Release 下载并自行确认来源的应用执行该命令。
 
-包含两个子命令：`extract` 和 `add`，分别用于提取压缩文件和向密码库中添加密码
+### Windows
 
-如果不指定子命令，默认会将传入的参数作为压缩文件路径执行 `extract`
+1. 下载并完整解压 `ezz-<版本>-windows-x64.zip`。
+2. 保持 `ezz.exe` 与 `7zz.exe` 位于同一目录。
+3. 用 `ezz.exe` 打开归档，或直接启动 `ezz.exe` 后选择文件。
 
-参数说明如下：
+ezz 不提供安装器，也不会修改注册表或抢占默认文件关联。需要右键菜单时，可自行使用 [Custom Context Menu](https://github.com/ikas-mc/ContextMenuForWindows11) 等工具配置“用 ezz 打开”。
+
+## 使用方式
+
+- 在 Finder 或 Windows 资源管理器中选择一个或多个文件并用 ezz 打开。
+- 直接启动 ezz 时会显示允许多选、允许选择任意文件的系统文件选择器。
+- macOS 注册常见压缩扩展名以及 Steganographier 的 `mp4`、`mkv`；未注册或修改过后缀的文件请通过文件选择器打开。
+- 队列完成后会显示汇总通知并退出，程序不会常驻后台。
+
+当空密码和已保存密码都失败时，密码弹窗会显示：
+
+- `Remember this password`：默认勾选，仅在完整解压成功后保存密码。
+- `Keep the original archive`：默认不勾选，只影响当前归档及其分卷。
+
+密码错误时可以继续重试；取消只会让当前文件失败，批处理仍会继续。
+
+## 输出与冲突
+
+- 只有一个有效顶层文件或目录时，直接提交该项。
+- 有多个顶层项时，提交到以逻辑归档名命名的目录。
+- 顶层 `.DS_Store` 和 `__MACOSX` 会被丢弃，其他隐藏文件会保留。
+- 文件冲突使用 `name (1).ext`，目录冲突使用 `name (1)`；不会覆盖或合并现有内容。
+- 普通归档只解压一层，不会递归解压其中的内层归档。
+
+## 分卷归档
+
+可以打开分卷集合中的任意一卷：
+
+- 数字分卷：`.001`、`.002`、`.003` 等。
+- RAR 分卷：`.part1.rar`、`.part2.rar` 等，也支持带前导零的编号。
+- ZIP 分卷：`.z01`、`.z02` 等，自动定位对应的 `.zip`。
+
+缺少首卷或中间卷时，当前输入会失败并保留全部分卷。只有完整解压和提交成功后，确认属于该集合的所有分卷才会一起移入废纸篓或回收站。
+
+## 数据位置
+
+ezz 没有设置文件，也不读取或迁移 v2 的 `.ezz.pw` 和程序目录日志。
+
+| 数据 | macOS | Windows |
+| --- | --- | --- |
+| 密码库 | `~/Library/Application Support/ezz/passwords.json` | `%APPDATA%\ezz\passwords.json` |
+| 日志 | `~/Library/Logs/ezz/ezz.log` | `%LOCALAPPDATA%\ezz\logs\ezz.log` |
+
+密码库是仅当前用户可访问的结构化明文文件，不使用 Keychain 或 Windows Credential Manager。日志不会记录密码或完整的 7-Zip 密码参数。
+
+## 构建与测试
+
+普通 `cargo build` 不访问网络，也不会自动下载 7-Zip。首次开发或运行真实端到端测试前执行：
 
 ```sh
-Usage: ezz [FILE] [COMMAND]
-
-Commands:
-  extract  e[X]tract an archive
-  add      [A]dd a password to the wordlist
-  help     Print this message or the help of the given subcommand(s)
-
-Arguments:
-  [FILE]  path to input file (when no subcommand is given, extract it)
-
-Options:
-  -h, --help     Print help
-  -V, --version  Print version
-
-# 子命令 extract (x)
-Usage: ezz extract [OPTIONS] <FILE>
-
-Arguments:
-  <FILE>  path to input file
-
-Options:
-  -p, --password <PASSWORD>  specify password
-      --wordlist <FILE>      path to password wordlist
-  -h, --help                 Print help
-  -V, --version              Print version
-
-# 子命令 add (a)
-Usage: ezz add [OPTIONS] <PASSWORD>
-
-Arguments:
-  <PASSWORD>  password to add
-
-Options:
-      --wordlist <FILE>    path to password wordlist
-  -h, --help               Print help
-  -V, --version            Print version
+cargo xtask prepare
 ```
 
-由于 Windows 平台的模式设为了桌面程序（不会弹出终端窗口），导致其在终端不会有输出，包括 `--help` 和 `--version`，但程序可以正常接受参数并运行
-
-## 🛠️ Build
+该命令下载固定的 7zz-bin 26.02 平台资产、校验 SHA-256，并缓存到 `target/ezz-tools/26.02/`。需要代理时只对当前命令设置环境变量即可：
 
 ```sh
-cargo build --release
+HTTPS_PROXY=http://127.0.0.1:PORT \
+HTTP_PROXY=http://127.0.0.1:PORT \
+cargo xtask prepare
 ```
 
-项目使用了 [7zz-bin](https://github.com/Yangmoooo/7zz-bin) 提供的 `7zz.exe` 和 `7zzs`，因此需要在构建时联网以下载对应平台的二进制文件，由于 GitHub API 的限制，如需多次构建，建议设置环境变量 `EZZ_GITHUB_TOKEN` 或 `GITHUB_TOKEN` 以使用个人访问令牌
+本机验证命令：
 
-## 🔔 Notice
+```sh
+cargo fmt --all -- --check
+cargo test --workspace --all-targets
+cargo test --lib -- --ignored
+cargo clippy --workspace --all-targets -- -D warnings
+```
 
-### 关于分卷压缩包
+生成当前平台发布物：
 
-支持标准风格的分卷：
+```sh
+cargo xtask package
+```
 
-- 形如 `.001`、`.002`、`.003` 的分卷（一般由 7-Zip 生成）
-- 形如 `.part1.rar`、`.part2.rar` 的分卷
-- 形如 `.zip`、`.z01`、`.z02` 的分卷
+输出位于 `target/dist/`。macOS 打包会生成 plist、裁剪 arm64 7zz、依次 ad-hoc 签名 7zz 和应用包并验证签名；Windows 打包会生成包含完整运行文件和许可证的 Portable ZIP。
 
-使用时请打开第一个分卷（但 zip 是最后一个），即 `.001`、`.part1.rar`、**`.zip`**，否则无法完全清理分卷文件
+## 许可证
 
-### 关于目录结构
+ezz 使用 LGPL-2.1-or-later。发布物同时包含 7-Zip、unRAR 相关许可证原文；详情见 [`assets/7zip`](./assets/7zip)。
 
-- 若压缩包中只包含 1 个文件（夹），则直接提取至当前目录
-- 否则将提取至与压缩包同名的文件夹中，并排除重复的根目录
-
-### 关于 Linux 支持
-
-在 x86_64 架构的 Linux 上能够正常运行，但 **不支持** 在密码库中未找到匹配密码时提供弹窗输入的功能。**曾经** 在 KDE 桌面环境下测试通过，但由于个人不再使用 Linux 桌面，现已不再保证对 Linux 的支持（欢迎反馈问题）
-
-### 关于 Custom Context Menu
-
-作为一个 Portable App，本程序不会添加至 Windows 右键菜单
-
-但可以通过 [Custom Context Menu](https://github.com/ikas-mc/ContextMenuForWindows11) 来实现。具体用法请参考其 [Wiki](https://github.com/ikas-mc/ContextMenuForWindows11/wiki/Help)，或直接导入自用 [配置文件](./assets/用%20ezz%20提取.json)，然后修改其中 `ezz` 的路径即可
-
-请注意，尽管 Custom Context Menu 提供了选中多个文件后批量操作的功能，但本程序并不支持。如果将其 Match Files 设为 Each 模式，**似乎**能够工作（会出现错误通知），但不建议这样做
-
-## ❤️ Thanks
-
-- 感谢 [7-Zip](https://github.com/ip7z/7zip) 提供了强大的开源压缩工具
-- 感谢 [@cenglin123](https://github.com/cenglin123) 为探索可行的网盘保存方式所做出的大量实践和考证
-
-## 📄 License
-
-7-Zip 的许可证构成较为复杂，详见 [7zip](./assets/7zip) 目录下的原始文档
-
-其主要的许可证是 [LGPL](https://www.gnu.org/licenses/lgpl-2.1.html)，而本项目通过 [7zz-bin](https://github.com/Yangmoooo/7zz-bin) 封装并分发了 7-Zip 的二进制文件，因此也遵循 LGPL 许可
+感谢 [7-Zip](https://7-zip.org/) 提供解压引擎，以及 [Steganographier](https://github.com/cenglin123/SteganographierGUI) 对特殊视频封装格式的探索。

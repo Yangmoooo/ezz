@@ -155,6 +155,41 @@ impl SevenZip {
         }
     }
 
+    pub(crate) fn validate_paths(
+        &self,
+        input: &Path,
+        password: &str,
+    ) -> Result<(), ExtractionError> {
+        let mut command = Command::new(&self.executable);
+        command
+            .arg("l")
+            .args(["-slt", "-ba"])
+            .arg(password_switch(password))
+            .args(["-bsp0", "-sccUTF-8", "-scsUTF-8"])
+            .arg(input);
+        let output = command
+            .output()
+            .map_err(|error| ExtractionError::EngineLaunch {
+                path: self.executable.clone(),
+                message: error.to_string(),
+            })?;
+
+        if output.status.success() {
+            validate_listed_paths(&String::from_utf8_lossy(&output.stdout))
+        } else {
+            let message = output_message(&output);
+            if is_wrong_password(&message) {
+                Err(ExtractionError::WrongPassword)
+            } else {
+                Err(ExtractionError::EngineFailed {
+                    operation: "validate archive paths in",
+                    exit_code: output.status.code(),
+                    message,
+                })
+            }
+        }
+    }
+
     pub(crate) fn extract(
         &self,
         input: &Path,
@@ -249,6 +284,29 @@ fn is_safe_relative_path(path: &Path) -> bool {
         && path
             .components()
             .all(|component| matches!(component, std::path::Component::Normal(_)))
+}
+
+fn validate_listed_paths(output: &str) -> Result<(), ExtractionError> {
+    for path in output
+        .lines()
+        .filter_map(|line| line.strip_prefix("Path = "))
+    {
+        if is_unsafe_archive_path(path) {
+            return Err(ExtractionError::UnsafeOutput {
+                path: PathBuf::from(path),
+                reason: "archive entry escapes the extraction directory".to_owned(),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn is_unsafe_archive_path(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    path.is_empty()
+        || path.starts_with(['/', '\\'])
+        || (bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':')
+        || path.split(['/', '\\']).any(|component| component == "..")
 }
 
 fn password_switch(password: &str) -> OsString {

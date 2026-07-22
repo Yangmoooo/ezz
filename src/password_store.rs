@@ -137,6 +137,30 @@ fn set_private_permissions(path: &Path) -> std::io::Result<()> {
 }
 
 #[cfg(windows)]
-fn set_private_permissions(_path: &Path) -> std::io::Result<()> {
-    Ok(())
+fn set_private_permissions(path: &Path) -> std::io::Result<()> {
+    use std::ffi::OsString;
+    use std::process::Command;
+
+    let username = std::env::var_os("USERNAME")
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "USERNAME is not set"))?;
+    let mut account = OsString::new();
+    if let Some(domain) = std::env::var_os("USERDOMAIN") {
+        account.push(domain);
+        account.push("\\");
+    }
+    account.push(username);
+    account.push(":F");
+
+    let status = Command::new("icacls.exe")
+        .arg(path)
+        .args(["/inheritance:r", "/grant:r"])
+        .arg(account)
+        .status()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(std::io::Error::other(format!(
+            "icacls exited with {status}"
+        )))
+    }
 }

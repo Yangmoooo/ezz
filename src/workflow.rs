@@ -198,6 +198,7 @@ impl ExtractionWorkflow {
         let prepared = workspace.path().join("prepared");
         let archive_input = input_format.prepare(&seven_zip, input, &prepared)?;
         let password = self.resolve_password(&seven_zip, &archive_input, &selected_input)?;
+        seven_zip.validate_paths(&archive_input, &password.value)?;
 
         seven_zip.extract(&archive_input, &extracted, &password.value)?;
         validate_extracted_output(&extracted)?;
@@ -820,6 +821,7 @@ impl SourceCleaner for TrashCleaner {
 #[cfg(test)]
 mod tests {
     use std::collections::VecDeque;
+    use std::io::Write;
     use std::process::Command;
     use std::sync::Mutex;
 
@@ -946,6 +948,58 @@ mod tests {
         );
         assert!(payload.is_file(), "extracted output must stay committed");
         assert!(archive.is_file(), "failed cleanup must preserve the source");
+    }
+
+    #[test]
+    #[ignore = "requires cargo xtask prepare"]
+    fn damaged_archive_does_not_commit_partial_output_or_clean_the_source() {
+        let seven_zip = prepared_seven_zip();
+        assert!(
+            seven_zip.is_file(),
+            "run `cargo xtask prepare` before this test"
+        );
+
+        let sandbox = tempfile::tempdir().expect("create test sandbox");
+        let first = sandbox.path().join("first.txt");
+        let second = sandbox.path().join("second.txt");
+        let archive = sandbox.path().join("damaged.7z");
+        std::fs::write(&first, vec![b'a'; 4 * 1024]).expect("create first payload");
+        std::fs::write(&second, vec![b'b'; 4 * 1024]).expect("create second payload");
+        create_archive(
+            &seven_zip,
+            sandbox.path(),
+            &archive,
+            &["first.txt", "second.txt"],
+        );
+        std::fs::remove_file(&first).expect("remove first source payload");
+        std::fs::remove_file(&second).expect("remove second source payload");
+        let archive_file = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&archive)
+            .expect("open archive for truncation");
+        let length = archive_file.metadata().unwrap().len();
+        archive_file
+            .set_len(length / 2)
+            .expect("truncate test archive");
+
+        let result =
+            ExtractionWorkflow::with_source_cleaner(&seven_zip, RemoveSource).extract(&archive);
+
+        assert!(result.is_err(), "damaged archive must fail");
+        assert!(archive.is_file(), "damaged archive must be preserved");
+        assert!(
+            !first.exists(),
+            "partial first output must not be committed"
+        );
+        assert!(
+            !second.exists(),
+            "partial second output must not be committed"
+        );
+        assert_eq!(
+            std::fs::read_dir(sandbox.path()).unwrap().count(),
+            1,
+            "damaged archive must not leave a workspace"
+        );
     }
 
     #[test]
@@ -1128,6 +1182,55 @@ mod tests {
 
     #[test]
     #[ignore = "requires cargo xtask prepare"]
+    fn parent_directory_entry_is_rejected_without_committing_output() {
+        let seven_zip = prepared_seven_zip();
+        assert!(
+            seven_zip.is_file(),
+            "run `cargo xtask prepare` before this test"
+        );
+
+        let sandbox = tempfile::tempdir().expect("create test sandbox");
+        let archive = sandbox.path().join("unsafe.zip");
+        let escaped_name = format!("ezz-escaped-{}.txt", std::process::id());
+        let escaped = sandbox
+            .path()
+            .parent()
+            .expect("sandbox parent")
+            .join(&escaped_name);
+        let file = std::fs::File::create(&archive).expect("create unsafe ZIP");
+        let mut writer = zip::ZipWriter::new(file);
+        writer
+            .start_file(
+                format!("../{escaped_name}"),
+                zip::write::SimpleFileOptions::default(),
+            )
+            .expect("start unsafe ZIP entry");
+        writer
+            .write_all(b"must not escape")
+            .expect("write ZIP entry");
+        writer.finish().expect("finish unsafe ZIP");
+
+        let result =
+            ExtractionWorkflow::with_source_cleaner(&seven_zip, RemoveSource).extract(&archive);
+
+        assert!(
+            matches!(result, Err(ExtractionError::UnsafeOutput { .. })),
+            "unexpected result: {result:?}"
+        );
+        assert!(archive.is_file(), "unsafe archive must be preserved");
+        assert!(
+            !escaped.exists(),
+            "archive entry must not escape the workspace"
+        );
+        assert_eq!(
+            std::fs::read_dir(sandbox.path()).unwrap().count(),
+            1,
+            "unsafe archive must not commit output"
+        );
+    }
+
+    #[test]
+    #[ignore = "requires cargo xtask prepare"]
     fn encrypted_archive_uses_prompted_password_and_honors_keep_source() {
         let seven_zip = prepared_seven_zip();
         assert!(
@@ -1160,6 +1263,45 @@ mod tests {
         assert_eq!(std::fs::read(&payload).unwrap(), b"classified");
         assert!(archive.is_file(), "keep source must preserve the archive");
         assert!(outcome.warnings.is_empty(), "cleaner must not be called");
+    }
+
+    #[test]
+    #[ignore = "requires cargo xtask prepare"]
+    fn content_encrypted_archive_uses_the_prompted_password() {
+        let seven_zip = prepared_seven_zip();
+        assert!(
+            seven_zip.is_file(),
+            "run `cargo xtask prepare` before this test"
+        );
+
+        let sandbox = tempfile::tempdir().expect("create test sandbox");
+        let payload = sandbox.path().join("visible-name.txt");
+        let archive = sandbox.path().join("content-encrypted.7z");
+        std::fs::write(&payload, b"encrypted content").expect("create secret payload");
+        create_content_encrypted_archive(
+            &seven_zip,
+            sandbox.path(),
+            &archive,
+            "visible-name.txt",
+            "content password",
+        );
+        std::fs::remove_file(&payload).expect("remove source payload");
+        let prompt = ScriptedPasswordPrompt::new([PasswordResponse {
+            password: "content password".to_owned(),
+            remember: false,
+            keep_original: false,
+        }]);
+
+        let outcome = ExtractionWorkflow::with_adapters(&seven_zip, RemoveSource, prompt)
+            .extract(&archive)
+            .expect("extract content-encrypted archive");
+
+        assert_eq!(outcome.output, payload);
+        assert_eq!(std::fs::read(&payload).unwrap(), b"encrypted content");
+        assert!(
+            !archive.exists(),
+            "successful extraction must clean the source"
+        );
     }
 
     #[test]
@@ -1202,6 +1344,42 @@ mod tests {
 
         assert_eq!(std::fs::read(&payload).unwrap(), b"classified");
         assert!(!archive.exists(), "successful retry must clean the source");
+    }
+
+    #[test]
+    #[ignore = "requires cargo xtask prepare"]
+    fn cancelling_the_password_prompt_preserves_the_archive() {
+        let seven_zip = prepared_seven_zip();
+        assert!(
+            seven_zip.is_file(),
+            "run `cargo xtask prepare` before this test"
+        );
+
+        let sandbox = tempfile::tempdir().expect("create test sandbox");
+        let payload = sandbox.path().join("cancelled-secret.txt");
+        let archive = sandbox.path().join("cancelled.7z");
+        std::fs::write(&payload, b"cancelled secret").expect("create secret payload");
+        create_encrypted_archive(
+            &seven_zip,
+            sandbox.path(),
+            &archive,
+            "cancelled-secret.txt",
+            "not entered",
+        );
+        std::fs::remove_file(&payload).expect("remove source payload");
+
+        let result = ExtractionWorkflow::with_adapters(&seven_zip, RemoveSource, NoResponsePrompt)
+            .extract(&archive);
+
+        assert_eq!(
+            result,
+            Err(ExtractionError::PasswordRequired(archive.clone()))
+        );
+        assert!(archive.is_file(), "cancelled archive must be preserved");
+        assert!(
+            !payload.exists(),
+            "cancelled archive must not commit output"
+        );
     }
 
     #[test]
@@ -1441,6 +1619,48 @@ mod tests {
 
     #[test]
     #[ignore = "requires cargo xtask prepare"]
+    fn tar_gzip_and_xz_archives_extract_through_the_shared_workflow() {
+        let seven_zip = prepared_seven_zip();
+        assert!(
+            seven_zip.is_file(),
+            "run `cargo xtask prepare` before this test"
+        );
+
+        for (archive_type, extension) in [("tar", "tar"), ("gzip", "gz"), ("xz", "xz")] {
+            let sandbox = tempfile::tempdir().expect("create format sandbox");
+            let payload = sandbox.path().join(format!("payload-{archive_type}.txt"));
+            let archive = sandbox.path().join(format!("archive.{extension}"));
+            let content = format!("{archive_type} payload");
+            std::fs::write(&payload, &content).expect("create format payload");
+            create_typed_archive(
+                &seven_zip,
+                sandbox.path(),
+                &archive,
+                payload.file_name().unwrap().to_str().unwrap(),
+                archive_type,
+            );
+            std::fs::remove_file(&payload).expect("remove source payload");
+
+            let outcome = ExtractionWorkflow::with_source_cleaner(&seven_zip, RemoveSource)
+                .extract(&archive)
+                .expect("extract archive format");
+
+            let expected_output = if archive_type == "xz" {
+                sandbox.path().join("archive")
+            } else {
+                payload
+            };
+            assert_eq!(outcome.output, expected_output);
+            assert_eq!(std::fs::read_to_string(&expected_output).unwrap(), content);
+            assert!(
+                !archive.exists(),
+                "successful extraction must clean the source"
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "requires cargo xtask prepare"]
     fn steganographier_mkv_extracts_its_embedded_zip() {
         let seven_zip = prepared_seven_zip();
         assert!(
@@ -1568,6 +1788,25 @@ mod tests {
         assert!(status.success(), "7-Zip must create encrypted test archive");
     }
 
+    fn create_content_encrypted_archive(
+        seven_zip: &Path,
+        directory: &Path,
+        archive: &Path,
+        input: &str,
+        password: &str,
+    ) {
+        let status = Command::new(seven_zip)
+            .current_dir(directory)
+            .args(["a", "-t7z"])
+            .arg(archive)
+            .arg(input)
+            .arg(format!("-p{password}"))
+            .args(["-mhe=off", "-mx=1", "-bso0", "-bsp0"])
+            .status()
+            .expect("create content-encrypted archive with 7-Zip");
+        assert!(status.success(), "7-Zip must create encrypted test archive");
+    }
+
     fn create_zip_archive(seven_zip: &Path, directory: &Path, archive: &Path, input: &str) {
         let status = Command::new(seven_zip)
             .current_dir(directory)
@@ -1578,6 +1817,25 @@ mod tests {
             .status()
             .expect("create ZIP with 7-Zip");
         assert!(status.success(), "7-Zip must create the embedded ZIP");
+    }
+
+    fn create_typed_archive(
+        seven_zip: &Path,
+        directory: &Path,
+        archive: &Path,
+        input: &str,
+        archive_type: &str,
+    ) {
+        let status = Command::new(seven_zip)
+            .current_dir(directory)
+            .arg("a")
+            .arg(format!("-t{archive_type}"))
+            .arg(archive)
+            .arg(input)
+            .args(["-mx=1", "-bso0", "-bsp0"])
+            .status()
+            .expect("create typed archive with 7-Zip");
+        assert!(status.success(), "7-Zip must create {archive_type}");
     }
 
     fn minimal_mp4() -> Vec<u8> {

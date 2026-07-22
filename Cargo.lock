@@ -469,6 +469,7 @@ dependencies = [
  "thiserror",
  "trash",
  "winres",
+ "zip",
 ]
 
 [[package]]

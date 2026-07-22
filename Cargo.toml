@@ -35,6 +35,9 @@ native-windows-gui = { version = "1.0.13", default-features = false, features = 
 [target.'cfg(windows)'.build-dependencies]
 winres = "0.1"
 
+[dev-dependencies]
+zip = { version = "6", default-features = false, features = ["deflate"] }
+
 [profile.release]
 lto = "fat"
 panic = "abort"

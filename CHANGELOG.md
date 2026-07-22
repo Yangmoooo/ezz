@@ -9,7 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-[ ] 支持同时传入多个压缩包，将依次处理
+- 新增 macOS 11+ Apple Silicon 原生 AppKit 桌面支持、文件关联、文件选择器和 ad-hoc 签名应用包
+- 新增 Windows 10/11 x64 原生桌面适配、后续实例路径转发和 Portable ZIP
+- 支持一次打开多个输入并严格顺序处理，单个失败不再阻塞后续文件
+- 新增事务式解压、路径安全验证、无冲突提交和结构化成功警告
+- 支持从任意数字分卷、RAR 分卷或 ZIP 分卷自动定位首卷并清理完整集合
+- 支持通过内容识别 Steganographier MP4/MKV，同时拒绝普通视频
+- 新增原生密码重试弹窗、结构化明文密码库和最近成功密码复用
+- 新增固定 7zz-bin 26.02 版本、SHA-256 校验以及 `cargo xtask prepare/package`
+- 新增 macOS arm64 与 Windows x64 的真实 7-Zip CI 测试和发布物构建
+
+### Changed
+
+- Cargo 包名、程序名和显示名统一为 `ezz`，版本升级为 3.0.0
+- 普通归档改为按内容探测，不再依赖扩展名判断是否支持
+- 原归档只在完整结果提交后移入系统废纸篓或回收站，清理失败不再使解压结果失败
+- 密码库和日志迁移到平台标准用户数据目录，且不自动读取或迁移 v2 数据
+- macOS 和 Windows 使用各自原生桌面交互，核心解压行为由共享 Rust library 提供
+
+### Removed
+
+- 移除 Linux、macOS Intel、Windows ARM 和 macOS 10.x 支持
+- 移除 `add`、`extract` 子命令以及所有正式 CLI 契约
+- 移除主窗口、持久化设置和后台常驻能力
+- 移除构建脚本自动联网下载 7-Zip 的行为
+
+### Security
+
+- 7-Zip 只能向归档旁的随机隐藏工作目录解压，失败时不提交部分结果或清理源归档
+- 拒绝逃逸路径、绝对路径、设备文件、FIFO 和指向结果目录外部的符号链接
+- 密码库采用原子写入并设置严格文件权限，日志不记录密码
 
 ## [2.0.6] - 2025-11-08
 
