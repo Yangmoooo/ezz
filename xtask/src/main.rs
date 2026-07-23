@@ -21,7 +21,7 @@ const SEVEN_ZIP_VERSION: &str = "26.02";
 const ASSET: Asset = Asset {
     archive_name: "7zz-macos-universal.tar.xz",
     binary_name: "7zz",
-    sha256: "39dce4d0048bad25df79c1500b3c72357cefa6bb7a5a9d872607a5b6eac6c93d",
+    sha256: "f81a8e812ba3a997f7ec18e72a8361482c7af72994ec4e3057ad60f7f05a6c41",
     kind: ArchiveKind::TarXz,
 };
 
@@ -29,7 +29,7 @@ const ASSET: Asset = Asset {
 const ASSET: Asset = Asset {
     archive_name: "7zz-windows-x64.zip",
     binary_name: "7zz.exe",
-    sha256: "f65c826cd2041543a3054e2d24697a341e0a60ec6070ecf68b4abe6fa2210ee8",
+    sha256: "6bfa2d9e77d7c4b1abfb3acb9eb996aed09ff978dadcdf492ee0c2b95b8e1628",
     kind: ArchiveKind::Zip,
 };
 
