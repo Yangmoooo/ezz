@@ -28,7 +28,7 @@ enum InstanceMessage {
 }
 
 #[derive(Default, NwgUi)]
-struct PasswordDialog {
+pub struct PasswordDialog {
     #[nwg_resource(source_bin: Some(ICON_DATA))]
     icon: nwg::Icon,
 

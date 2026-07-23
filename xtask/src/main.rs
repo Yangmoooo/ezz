@@ -29,7 +29,7 @@ const ASSET: Asset = Asset {
 const ASSET: Asset = Asset {
     archive_name: "7zz-windows-x64.zip",
     binary_name: "7zz.exe",
-    sha256: "d02c5823652d15714c1552a9a18bc830d743401d9ad504b1f6f83938b19f4d3c",
+    sha256: "f65c826cd2041543a3054e2d24697a341e0a60ec6070ecf68b4abe6fa2210ee8",
     kind: ArchiveKind::Zip,
 };
 
