@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Output;
 
 use crate::workflow::ExtractionError;
+use crate::workflow::safety::{is_safe_relative_path, is_unsafe_archive_path};
 
 pub(crate) struct SevenZip {
     executable: PathBuf,
@@ -436,21 +437,6 @@ fn is_supported_embedded_type(archive_type: &str) -> bool {
         archive_type.to_ascii_lowercase().as_str(),
         "zip" | "7z" | "rar" | "rar5"
     )
-}
-
-fn is_safe_relative_path(path: &Path) -> bool {
-    !path.as_os_str().is_empty()
-        && path
-            .components()
-            .all(|component| matches!(component, std::path::Component::Normal(_)))
-}
-
-fn is_unsafe_archive_path(path: &str) -> bool {
-    let bytes = path.as_bytes();
-    path.is_empty()
-        || path.starts_with(['/', '\\'])
-        || (bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':')
-        || path.split(['/', '\\']).any(|component| component == "..")
 }
 
 fn password_switch(password: &str) -> OsString {
