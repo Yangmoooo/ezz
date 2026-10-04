@@ -13,7 +13,7 @@ use objc2::runtime::Bool;
 use objc2_foundation::{NSBundle, NSError, NSString};
 use objc2_user_notifications::{
     UNAuthorizationOptions, UNMutableNotificationContent, UNNotificationRequest,
-    UNUserNotificationCenter,
+    UNNotificationSound, UNUserNotificationCenter,
 };
 
 /// 启动时请求通知授权（设计 §12）。
@@ -57,6 +57,8 @@ fn send(summary: &str, body: &str) -> Result<(), Box<dyn Error>> {
     let content = UNMutableNotificationContent::new();
     content.setTitle(&NSString::from_str(summary));
     content.setBody(&NSString::from_str(body));
+    // 与 Windows 侧一致：用系统默认提示音（Windows 的 toast 自带提示音）。
+    content.setSound(Some(&UNNotificationSound::defaultSound()));
 
     // 标识只用于去重：带上毫秒时间戳，保证每条通知都单独出现。
     let stamp = SystemTime::now()

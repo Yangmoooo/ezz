@@ -9,8 +9,13 @@ use log::warn;
 use windows::UI::Notifications::{ToastNotification, ToastNotificationManager, ToastTemplateType};
 use windows::core::HSTRING;
 
-/// toast 的应用标识。与互斥体一样不带版本号，跳版本也不变。
-const APP_ID: &str = "io.github.yangmoooo.ezz";
+/// toast 的应用标识。
+///
+/// 未注册的 AUMID 会被 Windows **原样当作发送者名字显示**（这就是之前显示成
+/// `io.github.yangmoooo.ezz` 的原因），所以这个字符串直接决定用户看到什么。
+/// `CreateToastNotifierWithId` 要求 ≤ 128 字符且不含空格。
+/// 要显示成完全不同的名字只能注册 AUMID（开始菜单快捷方式），便携版不做。
+const APP_ID: &str = "Ezz";
 
 pub(crate) fn show_notification(summary: &str, body: &str) {
     if let Err(error) = send(summary, body) {

@@ -107,16 +107,11 @@ fn success_body(outcome: &ExtractionOutcome) -> String {
     body
 }
 
-/// 失败通知的正文：文件名 + 原因。
+/// 失败通知的正文：文件名 + 错误类型 + 指向日志。
 ///
-/// 有的错误变体（如 `InputNotFound`）自带路径，那就不要再补一次名字：名字只出现一次。
+/// 不贴引擎原文（可能很长、会被系统截断），完整内容与输入路径都在日志里。
 fn failure_body(name: &str, error: &ExtractionError) -> String {
-    let reason = error.to_string();
-    if reason.contains(name) {
-        reason
-    } else {
-        format!("{name}\n{reason}")
-    }
+    format!("{name}\n{}. See the log for details.", error.summary())
 }
 
 /// 报告"本次调用被跳过"（设计 §3.3）。
@@ -265,15 +260,81 @@ mod tests {
     }
 
     #[test]
-    fn failure_body_names_the_input_exactly_once() {
-        // 错误消息里没有名字：补上它。
+    fn failure_body_names_the_input_once_and_points_at_the_log() {
         let body = failure_body("archive.7z", &ExtractionError::WrongPassword);
-        assert_eq!(body, "archive.7z\nArchive password is incorrect");
+        assert_eq!(body, "archive.7z\nWrong password. See the log for details.");
+        assert_eq!(body.matches("archive.7z").count(), 1);
+    }
 
-        // 错误消息自带路径：不再补一次名字。
-        let missing = PathBuf::from("C:/data/archive.7z");
-        let body = failure_body("archive.7z", &ExtractionError::InputNotFound(missing));
-        assert_eq!(body, "Input does not exist: C:/data/archive.7z");
-        assert_eq!(body.matches("archive.7z").count(), 1, "{body}");
+    /// 每个错误变体都要有一句短、干净、可展示的分类。
+    ///
+    /// `summary` 的 `match` 是穷尽的，所以新增变体会直接编译失败；这条用例额外守住
+    /// “简短、纯 ASCII、不泄露引擎原文”这几个属性。
+    #[test]
+    fn every_error_summary_is_short_and_plain() {
+        let errors = [
+            ExtractionError::InputNotFound(PathBuf::from("a.7z")),
+            ExtractionError::InputNotFile(PathBuf::from("a.7z")),
+            ExtractionError::EngineNotFound(PathBuf::from("7zz")),
+            ExtractionError::EngineLaunch {
+                path: PathBuf::from("7zz"),
+                message: "boom".to_owned(),
+            },
+            ExtractionError::EngineFailed {
+                operation: "extract",
+                exit_code: Some(2),
+                message: "ERROR: nope".to_owned(),
+            },
+            ExtractionError::EngineFailed {
+                operation: "test",
+                exit_code: None,
+                message: "ERROR: nope".to_owned(),
+            },
+            ExtractionError::UnsupportedInput(PathBuf::from("a.7z")),
+            ExtractionError::MissingVolume(PathBuf::from("a.002")),
+            ExtractionError::WrongPassword,
+            ExtractionError::PasswordRequired(PathBuf::from("a.7z")),
+            ExtractionError::FileSystem {
+                operation: "commit",
+                path: PathBuf::from("a"),
+                message: "denied".to_owned(),
+            },
+            ExtractionError::UnsafeOutput {
+                path: PathBuf::from("a"),
+                reason: "escaped".to_owned(),
+            },
+        ];
+
+        for error in errors {
+            let summary = error.summary();
+            assert!(!summary.is_empty());
+            assert!(summary.len() < 60, "summary is too long: {summary}");
+            assert!(summary.is_ascii(), "keep summaries plain: {summary}");
+            assert!(
+                !summary.contains("ERROR"),
+                "engine output leaked: {summary}"
+            );
+            assert!(
+                !summary.ends_with('.'),
+                "the caller adds the period: {summary}"
+            );
+        }
+    }
+
+    #[test]
+    fn failure_body_never_leaks_the_engine_message() {
+        // 引擎原文可以很长、也会被系统截断：它只进日志，不进通知。
+        let verbatim = ExtractionError::EngineFailed {
+            operation: "extract",
+            exit_code: Some(2),
+            message: "ERROR: Data Error : payload/very/long/path.bin".repeat(20),
+        };
+        let body = failure_body("archive.7z", &verbatim);
+        assert_eq!(
+            body,
+            "archive.7z\n7-Zip could not extract the archive. See the log for details."
+        );
+        assert!(!body.contains("Data Error"), "{body}");
+        assert!(body.len() < 120, "the body must stay short: {body}");
     }
 }

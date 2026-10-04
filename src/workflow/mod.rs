@@ -135,6 +135,35 @@ pub enum ExtractionError {
     UnsafeOutput { path: PathBuf, reason: String },
 }
 
+impl ExtractionError {
+    /// 通知里用的**短分类**（设计 §3.2）。
+    ///
+    /// 通知不贴引擎原文：它可能很长、会被系统截断，而截断后的片段既看不懂也不完整。
+    /// 完整内容（含输入路径与每条警告）都在日志里，通知只说类型并指向日志。
+    pub fn summary(&self) -> &'static str {
+        match self {
+            Self::InputNotFound(_) => "Input file not found",
+            Self::InputNotFile(_) => "Input is not a file",
+            Self::EngineNotFound(_) => "7-Zip executable not found",
+            Self::EngineLaunch { .. } => "Could not start 7-Zip",
+            Self::EngineFailed { operation, .. } => match *operation {
+                "extract" => "7-Zip could not extract the archive",
+                "list" => "7-Zip could not read the archive",
+                "test" => "7-Zip could not verify the password",
+                "scan embedded data in" => "7-Zip could not scan the file",
+                "extract embedded archive from" => "7-Zip could not extract the embedded archive",
+                _ => "7-Zip failed",
+            },
+            Self::UnsupportedInput(_) => "Not a supported archive",
+            Self::MissingVolume(_) => "Archive volume is missing",
+            Self::WrongPassword => "Wrong password",
+            Self::PasswordRequired(_) => "No password provided",
+            Self::FileSystem { .. } => "File system error",
+            Self::UnsafeOutput { .. } => "Extraction escaped its workspace",
+        }
+    }
+}
+
 pub struct ExtractionWorkflow {
     seven_zip: PathBuf,
     source_cleaner: Box<dyn SourceCleaner>,
