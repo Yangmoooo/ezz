@@ -50,7 +50,7 @@ windows = { version = "0.62", features = [
 embed-resource = "3"
 
 [dev-dependencies]
-zip = { version = "6", default-features = false, features = ["deflate"] }
+zip = { version = "8", default-features = false, features = ["deflate"] }
 
 [profile.release]
 lto = "fat"

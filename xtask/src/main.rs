@@ -407,7 +407,13 @@ fn sha256(path: &Path) -> Result<String, Box<dyn Error>> {
         hasher.update(&buffer[..read]);
     }
 
-    Ok(format!("{:x}", hasher.finalize()))
+    let digest = hasher.finalize();
+    let mut checksum = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        use std::fmt::Write as _;
+        let _ = write!(checksum, "{byte:02x}");
+    }
+    Ok(checksum)
 }
 
 #[cfg(target_os = "macos")]
