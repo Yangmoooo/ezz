@@ -145,9 +145,9 @@ pub(super) fn resource_id(identifier: u32) -> PCWSTR {
 
 /// 控件与对话框的 ID：必须与 `assets/ezz.rc` 里的一致。
 pub(super) const DIALOG_ID: u32 = 101;
-pub(super) const ID_MESSAGE: i32 = 1001;
+/// 提示控件：提示词与文件名在同一段文字里，两行高是上限。
+pub(super) const ID_PROMPT: i32 = 1001;
 pub(super) const ID_PASSWORD: i32 = 1002;
 pub(super) const ID_REMEMBER: i32 = 1003;
 pub(super) const ID_KEEP_ORIGINAL: i32 = 1004;
-pub(super) const ID_FILENAME: i32 = 1005;
 pub(super) const ICON_ID: u32 = 1;

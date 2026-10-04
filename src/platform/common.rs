@@ -173,14 +173,33 @@ fn display_name(path: &Path) -> String {
 
 /// 密码弹窗第一行的说明文字（设计 §7）。
 ///
-/// 文件名单独占一行（Windows 交给 `SS_PATHELLIPSIS`，macOS 交给 `truncate_middle`），
-/// 所以这句必须短到不会换行。两个平台的文案都在这里，改词只改一处。
+/// 文件名接在冒号后面（`password_prompt_text`），所以这句必须短到能独占一行：
+/// 这样长名字被省略时，提示词永远完整。两个平台的文案都在这里，改词只改一处。
 pub fn password_prompt_message(previous_attempt_failed: bool) -> &'static str {
     if previous_attempt_failed {
-        "The password was incorrect. Try again."
+        "The password was incorrect. Try again:"
     } else {
-        "Enter the password for:"
+        "Enter the password:"
     }
+}
+
+/// 密码弹窗的完整一句话：`Enter the password: <name>`。
+///
+/// 名字跟在同一行而不是另起一行（设计 §7）：短名字看起来自然，长名字由
+/// `truncate_middle` 从句尾省略。`previous_attempt_failed` 时换成另一种文案。
+///
+/// Windows 侧不用它（那边要先测量再裁剪，用的是 `password_prompt_with_message`），
+/// 但保留在这里是为了用例能在任意主机上跑。
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn password_prompt_text(previous_attempt_failed: bool, filename: &str) -> String {
+    password_prompt_with_message(password_prompt_message(previous_attempt_failed), filename)
+}
+
+/// 用给定的提示词拼出完整一句话。
+///
+/// Windows 侧需要先按测量结果裁剪文件名，所以它分两步用：先拿提示词，再拼这一句。
+pub fn password_prompt_with_message(message: &str, filename: &str) -> String {
+    format!("{message} {filename}")
 }
 
 /// 名字过长时从中间省略（macOS 用；Windows 由系统在绘制时处理）。
@@ -252,11 +271,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn password_prompt_text_appends_the_name_to_one_sentence() {
+        assert_eq!(
+            password_prompt_text(false, "archive.7z"),
+            "Enter the password: archive.7z"
+        );
+        assert_eq!(
+            password_prompt_text(true, "archive.7z"),
+            "The password was incorrect. Try again: archive.7z"
+        );
+    }
+
+    #[test]
     fn password_prompt_message_reports_a_previous_failure() {
-        assert_eq!(password_prompt_message(false), "Enter the password for:");
+        assert_eq!(password_prompt_message(false), "Enter the password:");
         assert_eq!(
             password_prompt_message(true),
-            "The password was incorrect. Try again."
+            "The password was incorrect. Try again:"
         );
     }
 

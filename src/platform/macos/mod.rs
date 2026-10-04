@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 
 use super::RunOutcome;
 use super::common::{
-    PlatformPaths, initialize_logging, password_prompt_message, report_outcome, truncate_middle,
+    PlatformPaths, initialize_logging, password_prompt_text, report_outcome, truncate_middle,
 };
 
 mod notifications;
@@ -31,8 +31,9 @@ pub(crate) use notifications::show_notification;
 /// "处理完就退出"）。之后再到达的交付由 LaunchServices 重新启动应用处理。
 const QUIT_AFTER: f64 = 0.0;
 
-/// 弹窗里文件名的字符上限：`NSAlert` 不会帮我们中间省略，名字太长会把告警框撑得很宽。
-const FILENAME_LIMIT: usize = 48;
+/// 弹窗里文件名的字符预算：`NSAlert` 会自己长高长宽，两行大约能放下这么多字。
+/// 超过就中间省略（Windows 侧是真实测量，见 `platform/windows/dialog.rs`）。
+const NAME_BUDGET: usize = 90;
 
 struct AppDelegateIvars {
     workflow: ExtractionWorkflow,
@@ -168,11 +169,11 @@ impl PasswordPrompt for MacPasswordPrompt {
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| input.as_os_str().to_string_lossy().into_owned());
-        // 说明一行、文件名一行（§7）：名字单独省略，不会把说明挤掉。
-        alert.setInformativeText(&NSString::from_str(&format!(
-            "{}\n{}",
-            password_prompt_message(previous_attempt_failed),
-            truncate_middle(&filename, FILENAME_LIMIT)
+        // 提示词与文件名在同一句话里（§7）：短名字自然，长名字只从句尾省略。
+        // `NSAlert` 会自己长高长宽，所以“最多两行”在这里靠名字的字符预算近似约束。
+        alert.setInformativeText(&NSString::from_str(&password_prompt_text(
+            previous_attempt_failed,
+            &truncate_middle(&filename, NAME_BUDGET),
         )));
         alert.addButtonWithTitle(ns_string!("Extract"));
         alert.addButtonWithTitle(ns_string!("Cancel"));
