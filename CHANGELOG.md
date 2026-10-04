@@ -10,8 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - 新增 macOS 11+ Apple Silicon 原生 AppKit 桌面支持、文件关联、文件选择器和 ad-hoc 签名应用包
-- 新增 Windows 10/11 x64 原生桌面适配、后续实例路径转发和 Portable ZIP
-- 支持一次打开多个输入并严格顺序处理，单个失败不再阻塞后续文件
+- 新增 Windows 10/11 x64 原生桌面适配与 Portable ZIP
 - 新增事务式解压、路径安全验证、无冲突提交和结构化成功警告
 - 支持从任意数字分卷、RAR 分卷或 ZIP 分卷自动定位首卷并清理完整集合
 - 支持通过内容识别 Steganographier MP4/MKV，同时拒绝普通视频
@@ -25,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 普通归档改为按内容探测，不再依赖扩展名判断是否支持
 - 原归档只在完整结果提交后移入系统废纸篓或回收站，清理失败不再使解压结果失败
 - 密码库和日志迁移到平台标准用户数据目录，且不自动读取或迁移 v2 数据
+- 并发调用改为每平台原生串行化：Windows 从启动到退出持有命名互斥体，拿不到时立即跳过并报告（点名本次调用的文件；无参数启动则提示已在运行）；macOS 由应用单实例与主线程同步提取保证
+- 进程退出码：任一输入失败或启动失败为 `1`，全部成功为 `0`（被跳过与取消文件选择器仍为 `0`）
 - macOS 和 Windows 使用各自原生桌面交互，核心解压行为由共享 Rust library 提供
 
 ### Removed

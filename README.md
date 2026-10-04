@@ -17,7 +17,6 @@ Linux、macOS Intel、Windows ARM 和 macOS 10.x 不属于 v3 支持范围。v2 
 
 - 通过内容而非文件扩展名识别 7-Zip 支持的归档，修改过后缀的归档也可通过文件选择器打开。
 - 支持 Steganographier 生成的 MP4/MKV；普通视频只读探测后会被拒绝，不会产生输出或清理源文件。
-- 支持一次打开多个文件并严格顺序处理，单个失败不会中断后续文件。
 - 可从任意数字分卷、`.partN.rar` 或 `.zNN` 分卷开始，自动定位首卷并在成功后清理完整分卷集合。
 - 支持无密码、内容加密和文件名加密归档，并可在原生密码弹窗中重试。
 - 只在归档旁的隐藏临时目录中解压；验证完整结果后才提交，不覆盖或合并已有文件。
@@ -45,21 +44,23 @@ xattr -dr com.apple.quarantine /Applications/ezz.app
 2. 保持 `ezz.exe` 与 `7zz.exe` 位于同一目录。
 3. 用 `ezz.exe` 打开归档，或直接启动 `ezz.exe` 后选择文件。
 
-ezz 不提供安装器，也不会修改注册表或抢占默认文件关联。需要右键菜单时，可自行使用 [Custom Context Menu](https://github.com/ikas-mc/ContextMenuForWindows11) 等工具配置“用 ezz 打开”。
+ezz 不提供安装器，也不会修改注册表或抢占默认文件关联。需要右键菜单时，可自行使用 [Custom Context Menu](https://github.com/ikas-mc/ContextMenuForWindows11) 等工具；仓库里的 [`assets/用 ezz 提取.json`](./assets/用%20ezz%20提取.json) 是一份可直接导入的配置，导入前请把其中的 `exe` 与 `icon` 路径改成你解压后的 `ezz.exe`。
+
+导入时建议把 `acceptMultipleFilesFlag` 设为 `1`（即一次把选中的全部路径交给同一个 ezz 进程）。保持 `0` 时每个文件会各起一个进程，只有第一个能提取，其余的会被跳过并各自弹出一条通知——需要重新提取一次。
 
 ## 使用方式
 
-- 在 Finder 或 Windows 资源管理器中选择一个或多个文件并用 ezz 打开。
+- 在 Finder 或 Windows 资源管理器中选择文件并用 ezz 打开。
 - 直接启动 ezz 时会显示允许多选、允许选择任意文件的系统文件选择器。
 - macOS 注册常见压缩扩展名以及 Steganographier 的 `mp4`、`mkv`；未注册或修改过后缀的文件请通过文件选择器打开。
-- 队列完成后会显示汇总通知并退出，程序不会常驻后台。
+- 每个文件处理完成后都会显示一条通知并报告最终路径（含警告数量）；全部完成后程序退出，不会常驻后台。
 
 当空密码和已保存密码都失败时，密码弹窗会显示：
 
 - `Remember this password`：默认勾选，仅在完整解压成功后保存密码。
 - `Keep the original archive`：默认不勾选，只影响当前归档及其分卷。
 
-密码错误时可以继续重试；取消只会让当前文件失败，批处理仍会继续。
+密码错误时可以继续重试；取消只会让当前文件失败。
 
 ## 输出与冲突
 
@@ -81,14 +82,52 @@ ezz 不提供安装器，也不会修改注册表或抢占默认文件关联。�
 
 ## 数据位置
 
-ezz 没有设置文件，也不读取或迁移 v2 的 `.ezz.pw` 和程序目录日志。
+ezz 没有设置文件。密码库与日志放在同一个应用数据目录：
 
 | 数据 | macOS | Windows |
 | --- | --- | --- |
-| 密码库 | `~/Library/Application Support/ezz/passwords.json` | `%APPDATA%\ezz\passwords.json` |
-| 日志 | `~/Library/Logs/ezz/ezz.log` | `%LOCALAPPDATA%\ezz\logs\ezz.log` |
+| 密码库 | `~/Library/Application Support/ezz/passwords.json` | `%LOCALAPPDATA%\ezz\passwords.json` |
+| 日志 | `~/Library/Application Support/ezz/ezz.log` | `%LOCALAPPDATA%\ezz\ezz.log` |
 
 密码库是仅当前用户可访问的结构化明文文件，不使用 Keychain 或 Windows Credential Manager。日志不会记录密码或完整的 7-Zip 密码参数。
+
+### 密码库格式
+
+```json
+{
+  "version": 1,
+  "passwords": [
+    "short-form-password",
+    { "password": "hunter2", "uses": 3, "last_used": 1784786364 }
+  ]
+}
+```
+
+- `passwords` 的元素可以是字符串（等价于 `uses` 与 `last_used` 为 0），也可以是对象。
+- `version` 缺失时按 `1` 处理；`uses` 与 `last_used` 缺失时按 `0` 处理；未知字段忽略。手工编辑后无需保持排序。
+- 文件读不出来时 ezz 会忽略它并继续允许手动输入密码，不会让提取失败；下一次成功保存前会把原文件改名为 `passwords.json.corrupt-<时间戳>` 保留。
+
+### 从 v2 迁移密码
+
+v2 的 `.ezz.pw` 是文本文件（在旁边可执行文件同目录，或用户主目录）：首行是三个缓存行号，其余每行是 `<使用次数>,<密码>`。把每行转成 `passwords` 里的一个对象即可，例如：
+
+```text
+0 0 0
+3,hunter2
+1,correct horse
+```
+
+```json
+{
+  "version": 1,
+  "passwords": [
+    { "password": "hunter2", "uses": 3, "last_used": 0 },
+    { "password": "correct horse", "uses": 1, "last_used": 0 }
+  ]
+}
+```
+
+密码里如果包含逗号，以**第一个**逗号为分隔（其余部分都属于密码）。
 
 ## 构建与测试
 
