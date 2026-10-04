@@ -272,7 +272,9 @@ mod tests {
     use std::sync::{Mutex, PoisonError};
     use std::time::{Duration, Instant};
     use windows::Win32::UI::Controls::EM_GETPASSWORDCHAR;
-    use windows::Win32::UI::WindowsAndMessaging::{EnumChildWindows, FindWindowW, GetDlgCtrlID};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        EnumChildWindows, FindWindowW, GetClassNameW, GetDlgCtrlID, GetWindowTextW,
+    };
     use windows::core::BOOL;
 
     /// 这些用例都要驱动*同一个*标题的模态对话框，而 `FindWindowW` 会找到进程里的任意一个。
@@ -457,6 +459,85 @@ mod tests {
         assert_eq!(hidden, PASSWORD_MASK, "the password starts hidden");
         assert_eq!(revealed, 0, "Show password must reveal the text");
         assert_eq!(rehidden, PASSWORD_MASK, "unchecking must hide it again");
+    }
+
+    /// `EnumChildWindows` 的回调：收集子窗口句柄。
+    ///
+    /// # Safety
+    /// `lparam` 必须是调用方传入的 `&mut Vec<HWND>`，且在枚举期间保持存活。
+    unsafe extern "system" fn collect_window(window: HWND, lparam: LPARAM) -> BOOL {
+        // SAFETY: 见函数的 `# Safety`。
+        unsafe {
+            let windows = &mut *(lparam.0 as *mut Vec<HWND>);
+            windows.push(window);
+        }
+        true.into()
+    }
+
+    /// 每个按钮类控件都必须带助记键（`&X`），而且字母在对话框内唯一。
+    ///
+    /// Win32 的助记键是 `Alt` + 字母，文字里的 `&` 会被画成下划线；单独的字母不会生效
+    /// （焦点在密码框时字母是要输入的密码，不能拿来当快捷键）。
+    #[test]
+    #[ignore = "requires an interactive desktop session"]
+    fn button_labels_have_unique_mnemonics() {
+        let _serial = serial();
+        super::super::initialize_process().expect("initialize process");
+
+        let driver = std::thread::spawn(|| {
+            let window = wait_for_dialog();
+            let mut children: Vec<HWND> = Vec::new();
+            // SAFETY: `children` 在枚举期间存活；回调只往里 push。
+            unsafe {
+                let _ = EnumChildWindows(
+                    Some(window),
+                    Some(collect_window),
+                    LPARAM((&raw mut children) as isize),
+                );
+            }
+
+            let mut labels: Vec<(i32, String)> = Vec::new();
+            for child in children {
+                let mut class = [0_u16; 64];
+                let mut text = [0_u16; 256];
+                // SAFETY: 控件属于本进程的对话框；两个缓冲区都可写。
+                let (class_length, text_length) = unsafe {
+                    (
+                        GetClassNameW(child, &mut class),
+                        GetWindowTextW(child, &mut text),
+                    )
+                };
+                let class_name = String::from_utf16_lossy(&class[..class_length as usize]);
+                if class_name != "Button" {
+                    continue;
+                }
+                labels.push((
+                    unsafe { GetDlgCtrlID(child) },
+                    String::from_utf16_lossy(&text[..text_length as usize]),
+                ));
+            }
+            drive_dialog("", ID_CANCEL, None, None);
+            labels
+        });
+        let _ = show(false).expect("show the dialog");
+        let labels = driver.join().expect("driver thread");
+
+        let mut mnemonics: Vec<char> = Vec::new();
+        for (identifier, label) in &labels {
+            let letter = label
+                .find('&')
+                .and_then(|index| label[index + 1..].chars().next());
+            let Some(letter) = letter else {
+                panic!("control {identifier} has no mnemonic: {label:?}");
+            };
+            mnemonics.push(letter.to_ascii_uppercase());
+        }
+
+        assert!(!mnemonics.is_empty(), "no buttons were found");
+        mnemonics.sort_unstable();
+        let mut unique = mnemonics.clone();
+        unique.dedup();
+        assert_eq!(mnemonics, unique, "duplicate mnemonics: {mnemonics:?}");
     }
 
     /// 模板里不得有重复的控件 ID。
