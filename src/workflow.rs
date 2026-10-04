@@ -2,11 +2,19 @@ use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
+use log::warn;
 use thiserror::Error;
 
 use crate::password_store::PasswordStore;
-use crate::seven_zip::SevenZip;
+use crate::seven_zip::{ArchiveScan, SevenZip};
+
+/// 提取阶段连续报密码错的重试上限。
+///
+/// 这个循环只服务于混合加密归档（校验通过、提取仍报密码错）。没有上限时，一个
+/// “没有任何单一密码能解开的包”会让弹窗无限重现，用户只能靠取消退出。
+const MAX_PASSWORD_RETRIES: u32 = 3;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExtractionOutcome {
@@ -24,6 +32,27 @@ pub enum ExtractionWarning {
     PasswordStoreUpdateFailed {
         path: PathBuf,
         message: String,
+    },
+    /// 7-Zip 以退出码 1（Warning）结束：结果已提交，但引擎报了警告（§5.1）。
+    EngineWarnings {
+        message: String,
+    },
+    /// 被丢弃或消毒的条目（§5.4）。
+    ///
+    /// `sanitized`：路径被 7-Zip 重写进工作目录的条目（`..`、绝对路径、盘符），
+    /// 以及被降级成普通文件的危险链接 —— 数据保留，但归档本身有问题。
+    /// `discarded`：没有进入提交结果的条目（逃逸或无法解析的链接、特殊文件）。
+    UnsafeEntriesSkipped {
+        discarded: Vec<PathBuf>,
+        sanitized: Vec<String>,
+    },
+    /// 剔除平台元数据后没有任何有效内容：提交的是一个空目录（§5.1 门 3）。
+    EmptyAfterMetadataRemoval {
+        removed: Vec<String>,
+    },
+    /// 引擎报告数据损坏的条目：它们的内容已从结果中删除（§5.1）。
+    FailedEntries {
+        entries: Vec<String>,
     },
 }
 
@@ -74,12 +103,6 @@ pub enum ExtractionError {
 
     #[error("Archive password was not provided: {0}")]
     PasswordRequired(PathBuf),
-
-    #[error("Could not read password database {path}: {message}")]
-    PasswordStore { path: PathBuf, message: String },
-
-    #[error("Archive produced no output: {0}")]
-    EmptyArchive(PathBuf),
 
     #[error("Could not {operation} {path}: {message}")]
     FileSystem {
@@ -196,15 +219,75 @@ impl ExtractionWorkflow {
             .map_err(|error| file_system_error("create extraction directory", &extracted, error))?;
 
         let prepared = workspace.path().join("prepared");
-        let archive_input = input_format.prepare(&seven_zip, input, &prepared)?;
-        let password = self.resolve_password(&seven_zip, &archive_input, &selected_input)?;
-        seven_zip.validate_paths(&archive_input, &password.value)?;
+        let (archive_input, detected_scan) = input_format.prepare(&seven_zip, input, &prepared)?;
 
-        seven_zip.extract(&archive_input, &extracted, &password.value)?;
-        validate_extracted_output(&extracted)?;
-        let output = commit_output(input, &extracted, &archive_set.output_stem)?;
+        // 探测阶段已经为同一个文件做过无密码扫描（R4）；只有特殊格式（扫描发生在刚
+        // 释放出的内嵌归档上）才需要补一次。这一次扫描同时完成了条目路径校验。
+        let scan = match detected_scan {
+            Some(scan) => scan,
+            None => seven_zip.scan(&archive_input, "")?,
+        };
+        let mut password =
+            self.resolve_password(&seven_zip, &archive_input, &scan, &selected_input)?;
+
+        // 逃逸不变量（§5.4）：解压前后比较归档所在目录的条目快照。工作目录本身已经存在，
+        // 快照时把它排除掉，否则它自己的修改时间会被当成逃逸。不依赖对 7-Zip 消毒规则的信任。
+        let snapshot = directory_snapshot(parent, workspace.path())?;
+
+        let mut retries = 0;
+        let verdict = loop {
+            match seven_zip.extract(&archive_input, &extracted, &password.value) {
+                Ok(verdict) => break verdict,
+                // 校验阶段通过而提取仍报密码错（混合加密归档）：归一化为密码错误并重新弹窗（D2/R4）。
+                Err(ExtractionError::WrongPassword) => {
+                    retries += 1;
+                    if retries > MAX_PASSWORD_RETRIES {
+                        warn!(
+                            "gave up after {retries} password attempts while extracting {}",
+                            archive_input.display()
+                        );
+                        return Err(ExtractionError::WrongPassword);
+                    }
+                    password = self.prompt_for_password(
+                        &seven_zip,
+                        &archive_input,
+                        &scan,
+                        &selected_input,
+                        true,
+                    )?;
+                }
+                Err(error) => return Err(error),
+            }
+        };
+
+        validate_escape_invariant(parent, workspace.path(), &snapshot)?;
+        let discarded = discard_unsafe_entries(&extracted)?;
+        let commit = commit_output(input, &extracted, &archive_set.output_stem)?;
+        let output = commit.path;
         let sources = archive_set.sources;
         let mut warnings = Vec::new();
+
+        let mut sanitized = scan.sanitized.clone();
+        sanitized.extend(verdict.sanitized_links);
+        if !discarded.is_empty() || !sanitized.is_empty() {
+            warnings.push(ExtractionWarning::UnsafeEntriesSkipped {
+                discarded,
+                sanitized,
+            });
+        }
+        if let Some(message) = verdict.engine_warning {
+            warnings.push(ExtractionWarning::EngineWarnings { message });
+        }
+        if !verdict.failed_entries.is_empty() {
+            warnings.push(ExtractionWarning::FailedEntries {
+                entries: verdict.failed_entries,
+            });
+        }
+        if commit.empty {
+            warnings.push(ExtractionWarning::EmptyAfterMetadataRemoval {
+                removed: commit.removed_metadata,
+            });
+        }
         if password.remember
             && !password.value.is_empty()
             && let Some(store) = &self.password_store
@@ -228,42 +311,46 @@ impl ExtractionWorkflow {
         })
     }
 
+    /// 决定本次要用哪个密码（§5.1 第 5 步）。
+    ///
+    /// 校验必须最小化（R4）：`scan` 已经判定不需要密码时**不得校验**；需要校验时，表头
+    /// 加密用一次列表（只解表头），内容加密只用最小条目测试（只解一个条目）。
     fn resolve_password(
         &self,
         seven_zip: &SevenZip,
         archive_input: &Path,
+        scan: &ArchiveScan,
         prompt_input: &Path,
     ) -> Result<ResolvedPassword, ExtractionError> {
-        match seven_zip.test_password(archive_input, "") {
-            Ok(()) => return Ok(ResolvedPassword::empty()),
-            Err(ExtractionError::WrongPassword) => {}
-            Err(error) => return Err(error),
+        if !scan.encrypted {
+            return Ok(ResolvedPassword::empty());
         }
 
         if let Some(store) = &self.password_store {
-            let candidates =
-                store
-                    .candidates()
-                    .map_err(|message| ExtractionError::PasswordStore {
-                        path: store.path().to_path_buf(),
-                        message,
-                    })?;
-            for password in candidates {
-                match seven_zip.test_password(archive_input, &password) {
-                    Ok(()) => {
-                        return Ok(ResolvedPassword {
-                            value: password,
-                            remember: true,
-                            keep_original: false,
-                        });
-                    }
-                    Err(ExtractionError::WrongPassword) => {}
-                    Err(error) => return Err(error),
+            // 读取失败不会让输入失败：`candidates` 内部已记录警告并回退为空候选（§7）。
+            for password in store.candidates() {
+                if validate_password(seven_zip, archive_input, scan, &password)? {
+                    return Ok(ResolvedPassword {
+                        value: password,
+                        remember: true,
+                        keep_original: false,
+                    });
                 }
             }
         }
 
-        let mut previous_attempt_failed = false;
+        self.prompt_for_password(seven_zip, archive_input, scan, prompt_input, false)
+    }
+
+    /// 弹窗取密码并校验；`previous_attempt_failed` 控制提示文案。
+    fn prompt_for_password(
+        &self,
+        seven_zip: &SevenZip,
+        archive_input: &Path,
+        scan: &ArchiveScan,
+        prompt_input: &Path,
+        mut previous_attempt_failed: bool,
+    ) -> Result<ResolvedPassword, ExtractionError> {
         loop {
             let Some(response) = self
                 .password_prompt
@@ -274,46 +361,78 @@ impl ExtractionWorkflow {
                 ));
             };
 
-            match seven_zip.test_password(archive_input, &response.password) {
-                Ok(()) => {
-                    return Ok(ResolvedPassword {
-                        value: response.password,
-                        remember: response.remember,
-                        keep_original: response.keep_original,
-                    });
-                }
-                Err(ExtractionError::WrongPassword) => previous_attempt_failed = true,
-                Err(error) => return Err(error),
+            if validate_password(seven_zip, archive_input, scan, &response.password)? {
+                return Ok(ResolvedPassword {
+                    value: response.password,
+                    remember: response.remember,
+                    keep_original: response.keep_original,
+                });
             }
+            previous_attempt_failed = true;
         }
     }
 }
 
+/// 最小化密码校验（R4/D2）。返回 `Ok(false)` 表示密码不对。
+///
+/// - 表头加密：用一次列表验证（只解表头），顺带完成“拿到密码才能看见”的条目路径校验。
+/// - 内容加密：只测试采样条目（只解一个条目），不跑整包 `t`。
+/// - 没有可用样本（空归档）：无法最小化校验，交给提取阶段判定，由重试循环兜底。
+fn validate_password(
+    seven_zip: &SevenZip,
+    archive_input: &Path,
+    scan: &ArchiveScan,
+    password: &str,
+) -> Result<bool, ExtractionError> {
+    let outcome = if scan.header_encrypted {
+        seven_zip.scan(archive_input, password).map(|_| ())
+    } else {
+        match scan.sample_entry.as_deref() {
+            Some(entry) => seven_zip.test_password(archive_input, password, Some(entry)),
+            None => return Ok(true),
+        }
+    };
+
+    match outcome {
+        Ok(()) => Ok(true),
+        Err(ExtractionError::WrongPassword) => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
 enum DetectedInputFormat {
-    RegularArchive,
-    Steganographier { embedded: PathBuf },
+    /// 常规归档：`scan` 是探测阶段已经做过的**无密码**扫描，直接复用（R4）。
+    RegularArchive {
+        scan: ArchiveScan,
+    },
+    Steganographier {
+        embedded: PathBuf,
+    },
 }
 
 impl DetectedInputFormat {
+    /// 准备实际要解压的输入，并带回一个已经做过的扫描（没有则为 `None`）。
     fn prepare(
         self,
         seven_zip: &SevenZip,
         input: &Path,
         prepared: &Path,
-    ) -> Result<PathBuf, ExtractionError> {
+    ) -> Result<(PathBuf, Option<ArchiveScan>), ExtractionError> {
         match self {
-            Self::RegularArchive => Ok(input.to_path_buf()),
+            Self::RegularArchive { scan } => Ok((input.to_path_buf(), Some(scan))),
             Self::Steganographier { embedded } => {
                 fs::create_dir(prepared).map_err(|error| {
                     file_system_error("create special-format workspace", prepared, error)
                 })?;
                 let archive = seven_zip.extract_embedded_archive(input, prepared, &embedded)?;
-                validate_extracted_output(prepared)?;
+                // 内嵌归档是 `-t#` 直接拷贝出来的单个文件，理论上不会出现链接或特殊文件；
+                // 仍然过一遍丢弃检查（结果忽略：这一步的失败由后面的 `is_file` 捕获）。
+                let _ = discard_unsafe_entries(prepared)?;
                 if !archive.is_file() {
                     return Err(ExtractionError::UnsupportedInput(input.to_path_buf()));
                 }
-                match seven_zip.probe(&archive) {
-                    Ok(()) | Err(ExtractionError::WrongPassword) => Ok(archive),
+                match seven_zip.scan(&archive, "") {
+                    Ok(scan) => Ok((archive, Some(scan))),
                     Err(_) => Err(ExtractionError::UnsupportedInput(input.to_path_buf())),
                 }
             }
@@ -361,10 +480,8 @@ impl InputFormatHandler for RegularArchiveHandler {
         seven_zip: &SevenZip,
         input: &Path,
     ) -> Result<Option<DetectedInputFormat>, ExtractionError> {
-        match seven_zip.probe(input) {
-            Ok(()) | Err(ExtractionError::WrongPassword) => {
-                Ok(Some(DetectedInputFormat::RegularArchive))
-            }
+        match seven_zip.scan(input, "") {
+            Ok(scan) => Ok(Some(DetectedInputFormat::RegularArchive { scan })),
             Err(ExtractionError::UnsupportedInput(_)) => Ok(None),
             Err(error) => Err(error),
         }
@@ -652,10 +769,19 @@ impl PasswordPrompt for NoPasswordPrompt {
     }
 }
 
-fn validate_extracted_output(root: &Path) -> Result<(), ExtractionError> {
+/// 丢弃不安全的条目并报告（设计 §5.4）。
+///
+/// 不安全条目**不得**让整个输入失败：这里删除它们并把相对路径交给调用方，由调用方记入
+/// 结构化警告。判据：
+///
+/// - 符号链接：解析不到目标，或解析后离开工作目录 → 删除（无法验证的链接一律不信）。
+/// - 符号链接：目标是绝对路径 → 删除（工作目录是临时的，提交后必然是死链）。
+/// - 特殊文件（设备、FIFO、socket 等）→ 删除。
+fn discard_unsafe_entries(root: &Path) -> Result<Vec<PathBuf>, ExtractionError> {
     let canonical_root = fs::canonicalize(root)
         .map_err(|error| file_system_error("resolve extraction directory", root, error))?;
     let mut directories = vec![root.to_path_buf()];
+    let mut discarded = Vec::new();
 
     while let Some(directory) = directories.pop() {
         let entries = fs::read_dir(&directory)
@@ -665,34 +791,96 @@ fn validate_extracted_output(root: &Path) -> Result<(), ExtractionError> {
                 file_system_error("inspect extracted entry in", &directory, error)
             })?;
             let path = entry.path();
-            let metadata = fs::symlink_metadata(&path)
+            // 用 `DirEntry::file_type` 而不是 `fs::symlink_metadata`：前者在 Windows 上直接来自
+            // `read_dir` 已经拿到的属性（零系统调用），在 Unix 上通常来自 `d_type`；两者都不跟
+            // 跟踪链接，语义一致。实测（5000 个文件）：`symlink_metadata` 每条目 44.5 µs，
+            // 换成它之后剩下的只有不可省的目录遍历（8 ms）。
+            let file_type = entry
+                .file_type()
                 .map_err(|error| file_system_error("inspect extracted entry", &path, error))?;
-            let file_type = metadata.file_type();
 
             if file_type.is_symlink() {
-                let resolved =
-                    fs::canonicalize(&path).map_err(|error| ExtractionError::UnsafeOutput {
-                        path: path.clone(),
-                        reason: format!("symbolic link cannot be resolved: {error}"),
-                    })?;
-                if !resolved.starts_with(&canonical_root) {
-                    return Err(ExtractionError::UnsafeOutput {
-                        path,
-                        reason: "symbolic link escapes the extraction directory".to_owned(),
-                    });
+                let target = fs::read_link(&path)
+                    .map_err(|error| file_system_error("read symbolic link", &path, error))?;
+                let escapes = target.is_absolute()
+                    || match fs::canonicalize(&path) {
+                        Ok(resolved) => !resolved.starts_with(&canonical_root),
+                        // 解析不到目标（死链）：可能是 `../..` 拼出来的逃逸，一律不信。
+                        Err(_) => true,
+                    };
+                if escapes {
+                    remove_symbolic_link(&path)?;
+                    discarded.push(relative_to(root, &path));
                 }
             } else if file_type.is_dir() {
                 directories.push(path);
             } else if !file_type.is_file() {
-                return Err(ExtractionError::UnsafeOutput {
-                    path,
-                    reason: "special files are not supported".to_owned(),
-                });
+                fs::remove_file(&path)
+                    .map_err(|error| file_system_error("remove special file", &path, error))?;
+                discarded.push(relative_to(root, &path));
             }
         }
     }
 
-    Ok(())
+    Ok(discarded)
+}
+
+/// 删除符号链接：Windows 上目录链接必须用 `remove_dir`。
+fn remove_symbolic_link(path: &Path) -> Result<(), ExtractionError> {
+    if fs::remove_file(path).is_ok() {
+        return Ok(());
+    }
+    fs::remove_dir(path).map_err(|error| file_system_error("remove symbolic link", path, error))
+}
+
+fn relative_to(root: &Path, path: &Path) -> PathBuf {
+    path.strip_prefix(root).unwrap_or(path).to_path_buf()
+}
+
+/// 归档所在目录的条目快照：名称 → 修改时间（设计 §5.4）。
+type DirectorySnapshot = Vec<(OsString, Option<SystemTime>)>;
+
+fn directory_snapshot(
+    directory: &Path,
+    ignore: &Path,
+) -> Result<DirectorySnapshot, ExtractionError> {
+    let ignored_name = ignore.file_name();
+    let mut snapshot = Vec::new();
+    let entries = fs::read_dir(directory)
+        .map_err(|error| file_system_error("snapshot directory", directory, error))?;
+    for entry in entries {
+        let entry =
+            entry.map_err(|error| file_system_error("snapshot entry in", directory, error))?;
+        if Some(entry.file_name().as_os_str()) == ignored_name {
+            continue;
+        }
+        let modified = entry
+            .metadata()
+            .ok()
+            .and_then(|metadata| metadata.modified().ok());
+        snapshot.push((entry.file_name(), modified));
+    }
+    snapshot.sort();
+    Ok(snapshot)
+}
+
+/// 逃逸不变量（设计 §5.4）：解压不得在归档所在目录留下任何新增或改动。
+///
+/// 发现任何差异就按致命失败处理：回滚工作目录（`TempDir` 的 Drop）且不清理原归档。
+fn validate_escape_invariant(
+    directory: &Path,
+    ignore: &Path,
+    before: &DirectorySnapshot,
+) -> Result<(), ExtractionError> {
+    let after = directory_snapshot(directory, ignore)?;
+    if &after == before {
+        return Ok(());
+    }
+
+    Err(ExtractionError::UnsafeOutput {
+        path: directory.to_path_buf(),
+        reason: "extraction changed entries outside its workspace".to_owned(),
+    })
 }
 
 fn absolute_path(path: &Path) -> Result<PathBuf, ExtractionError> {
@@ -705,93 +893,174 @@ fn absolute_path(path: &Path) -> Result<PathBuf, ExtractionError> {
         .map_err(|error| file_system_error("resolve absolute path for", path, error))
 }
 
+/// 提交结果（设计 §5.2 / §5.3）。
+struct Committed {
+    path: PathBuf,
+    /// 被剔除的平台元数据条目名。
+    removed_metadata: Vec<String>,
+    /// 剔除后没有任何有效内容：提交的是一个空目录（§5.1 门 3）。
+    empty: bool,
+}
+
 fn commit_output(
     input: &Path,
     extracted: &Path,
     output_stem: &OsStr,
-) -> Result<PathBuf, ExtractionError> {
-    remove_platform_metadata(extracted)?;
+) -> Result<Committed, ExtractionError> {
+    let removed_metadata = remove_platform_metadata(extracted)?;
     let mut entries = fs::read_dir(extracted)
         .map_err(|error| file_system_error("read extracted contents from", extracted, error))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| file_system_error("read extracted entry from", extracted, error))?;
 
+    let parent = input.parent().expect("validated input parent");
     match entries.len() {
-        0 => Err(ExtractionError::EmptyArchive(input.to_path_buf())),
+        // 剔除平台元数据后没有有效内容：输出为空是事实，不是错误（§5.1 门 3）。
+        // 提交一个以归档命名的空目录，让结果仍有一个最终实际路径。
+        0 => {
+            let path = commit_empty_directory(parent, output_stem)?;
+            Ok(Committed {
+                path,
+                removed_metadata,
+                empty: true,
+            })
+        }
         1 => {
             let entry = entries.pop().expect("one extracted entry");
-            let source = entry.path();
-            let parent = input.parent().expect("validated input parent");
-            let target = unique_file_destination(parent, &entry.file_name());
-            fs::rename(&source, &target)
-                .map_err(|error| file_system_error("commit extracted output to", &target, error))?;
-            Ok(target)
+            // 命名规则看条目**类型**：目录用 `name (1)`，文件用 `name (1).ext`（§5.3）。
+            let is_directory = entry
+                .file_type()
+                .map_err(|error| {
+                    file_system_error("inspect extracted entry", &entry.path(), error)
+                })?
+                .is_dir();
+            let kind = if is_directory {
+                CommitKind::Directory
+            } else {
+                CommitKind::File
+            };
+            let path = commit_with_unique_name(&entry.path(), parent, &entry.file_name(), kind)?;
+            Ok(Committed {
+                path,
+                removed_metadata,
+                empty: false,
+            })
         }
         _ => {
-            let parent = input.parent().expect("validated input parent");
-            let target = unique_directory_destination(parent, output_stem);
-            fs::rename(extracted, &target)
-                .map_err(|error| file_system_error("commit extracted output to", &target, error))?;
-            Ok(target)
+            let path =
+                commit_with_unique_name(extracted, parent, output_stem, CommitKind::Directory)?;
+            Ok(Committed {
+                path,
+                removed_metadata,
+                empty: false,
+            })
         }
     }
 }
 
-fn remove_platform_metadata(extracted: &Path) -> Result<(), ExtractionError> {
+/// 提交一个空目录：没有内容要搬，直接把名字占下来（§5.1 门 3）。
+fn commit_empty_directory(parent: &Path, name: &OsStr) -> Result<PathBuf, ExtractionError> {
+    for candidate in unique_destination_candidates(parent, name, CommitKind::Directory) {
+        match fs::create_dir(&candidate) {
+            Ok(()) => return Ok(candidate),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(file_system_error(
+                    "create empty result directory",
+                    &candidate,
+                    error,
+                ));
+            }
+        }
+    }
+
+    unreachable!("u64 destination sequence exhausted")
+}
+
+/// 剔除平台元数据（§5.2），返回被剔除的条目名。
+fn remove_platform_metadata(extracted: &Path) -> Result<Vec<String>, ExtractionError> {
+    let mut removed = Vec::new();
     for name in ["__MACOSX", ".DS_Store"] {
         let path = extracted.join(name);
         if path.is_dir() {
             fs::remove_dir_all(&path)
                 .map_err(|error| file_system_error("remove platform metadata", &path, error))?;
+            removed.push(name.to_owned());
         } else if path.exists() {
             fs::remove_file(&path)
                 .map_err(|error| file_system_error("remove platform metadata", &path, error))?;
+            removed.push(name.to_owned());
         }
     }
-    Ok(())
+    Ok(removed)
 }
 
-fn unique_file_destination(parent: &Path, name: &OsStr) -> PathBuf {
-    let initial = parent.join(name);
-    if !initial.exists() {
-        return initial;
+#[derive(Clone, Copy)]
+enum CommitKind {
+    File,
+    Directory,
+}
+
+/// 把 `source` 提交为 `parent` 下的一个不冲突名字（§5.3）。
+///
+/// 候选名字按 `name`, `name (1)`, `name (2)` … 递增。若在探测与重命名之间被抢先
+/// （Windows 上互斥体已排除跨进程并发；只剩直接运行 macOS bundle 内的二进制这条
+/// 开发者路径），就继续递增序号重试，**绝不覆盖既有条目**。
+fn commit_with_unique_name(
+    source: &Path,
+    parent: &Path,
+    name: &OsStr,
+    kind: CommitKind,
+) -> Result<PathBuf, ExtractionError> {
+    for candidate in unique_destination_candidates(parent, name, kind) {
+        if candidate.exists() {
+            continue;
+        }
+
+        match fs::rename(source, &candidate) {
+            Ok(()) => return Ok(candidate),
+            // 竞态：候选名字在探测之后被占用。换下一个序号。
+            Err(_) if candidate.exists() => continue,
+            Err(error) => {
+                return Err(file_system_error(
+                    "commit extracted output to",
+                    &candidate,
+                    error,
+                ));
+            }
+        }
     }
 
-    let name_path = Path::new(name);
-    let stem = name_path.file_stem().unwrap_or(name);
-    let extension = name_path.extension();
-    for sequence in 1_u64.. {
-        let mut candidate = OsString::from(stem);
+    unreachable!("u64 destination sequence exhausted")
+}
+
+/// 生成 `name`, `name (1)`, `name (2)` … 的候选目的地。
+///
+/// 文件保留扩展名（`archive (1).zip`），目录整体递增（`archive.zip (1)`）。
+fn unique_destination_candidates<'a>(
+    parent: &'a Path,
+    name: &'a OsStr,
+    kind: CommitKind,
+) -> impl Iterator<Item = PathBuf> + 'a {
+    let (stem, extension) = match kind {
+        CommitKind::File => {
+            let name_path = Path::new(name);
+            let stem = name_path.file_stem().unwrap_or(name).to_os_string();
+            let extension = name_path.extension().map(OsString::from);
+            (stem, extension)
+        }
+        CommitKind::Directory => (name.to_os_string(), None),
+    };
+
+    std::iter::once(parent.join(name)).chain((1_u64..).map(move |sequence| {
+        let mut candidate = stem.clone();
         candidate.push(format!(" ({sequence})"));
-        if let Some(extension) = extension {
+        if let Some(extension) = &extension {
             candidate.push(".");
             candidate.push(extension);
         }
-        let candidate = parent.join(candidate);
-        if !candidate.exists() {
-            return candidate;
-        }
-    }
-
-    unreachable!("u64 destination sequence exhausted")
-}
-
-fn unique_directory_destination(parent: &Path, name: &OsStr) -> PathBuf {
-    let initial = parent.join(name);
-    if !initial.exists() {
-        return initial;
-    }
-
-    for sequence in 1_u64.. {
-        let mut candidate = OsString::from(name);
-        candidate.push(format!(" ({sequence})"));
-        let candidate = parent.join(candidate);
-        if !candidate.exists() {
-            return candidate;
-        }
-    }
-
-    unreachable!("u64 destination sequence exhausted")
+        parent.join(candidate)
+    }))
 }
 
 fn file_system_error(
@@ -814,7 +1083,10 @@ struct TrashCleaner;
 
 impl SourceCleaner for TrashCleaner {
     fn clean(&self, sources: &[PathBuf]) -> Result<(), String> {
-        trash::delete_all(sources).map_err(|error| error.to_string())
+        trash::delete_all(sources).map_err(|error| error.to_string())?;
+        // 移入回收站不会自动触发 shell 变更通知，否则目录里的图标会残留到手动刷新（§11.1）。
+        crate::explorer::refresh_parents(sources);
+        Ok(())
     }
 }
 
@@ -1150,7 +1422,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     #[ignore = "requires cargo xtask prepare"]
-    fn symbolic_link_that_escapes_the_result_is_rejected() {
+    fn symbolic_link_that_escapes_the_result_is_discarded_and_reported() {
         use std::os::unix::fs::symlink;
 
         let seven_zip = prepared_seven_zip();
@@ -1166,23 +1438,51 @@ mod tests {
         create_archive(&seven_zip, sandbox.path(), &archive, &["escape"]);
         std::fs::remove_file(&link).expect("remove source symlink");
 
-        let result =
-            ExtractionWorkflow::with_source_cleaner(&seven_zip, RemoveSource).extract(&archive);
+        // 设计 §5.4 / D1：不安全条目不得否决整个输入。
+        let outcome = ExtractionWorkflow::with_source_cleaner(&seven_zip, RemoveSource)
+            .extract(&archive)
+            .expect("an escaping link must not fail the whole input");
 
+        let reported = outcome
+            .warnings
+            .iter()
+            .find_map(|warning| match warning {
+                ExtractionWarning::UnsafeEntriesSkipped {
+                    discarded,
+                    sanitized,
+                } => Some((discarded, sanitized)),
+                _ => None,
+            })
+            .expect("the discarded entry must be reported");
         assert!(
-            matches!(result, Err(ExtractionError::UnsafeOutput { .. })),
-            "unexpected result: {result:?}"
+            reported
+                .0
+                .iter()
+                .chain(reported.1.iter().map(Path::new))
+                .any(|entry| entry.to_string_lossy().contains("escape")),
+            "the escaping entry must be named in the report: {reported:?}"
         );
-        assert!(archive.is_file(), "unsafe archive must be preserved");
+
+        // 提交结果里不得留下逃逸链接（要么没有，要么不再是链接）。
+        let committed = outcome.output.join("escape");
+        if committed.exists() {
+            assert!(
+                !std::fs::symlink_metadata(&committed)
+                    .expect("inspect committed entry")
+                    .file_type()
+                    .is_symlink(),
+                "an escaping link must not be committed as a link"
+            );
+        }
         assert!(
             std::fs::symlink_metadata(&link).is_err(),
-            "unsafe output must not be committed"
+            "unsafe output must not be committed outside the result"
         );
     }
 
     #[test]
     #[ignore = "requires cargo xtask prepare"]
-    fn parent_directory_entry_is_rejected_without_committing_output() {
+    fn parent_directory_entry_is_sanitized_and_reported() {
         let seven_zip = prepared_seven_zip();
         assert!(
             seven_zip.is_file(),
@@ -1210,22 +1510,32 @@ mod tests {
             .expect("write ZIP entry");
         writer.finish().expect("finish unsafe ZIP");
 
-        let result =
-            ExtractionWorkflow::with_source_cleaner(&seven_zip, RemoveSource).extract(&archive);
+        // 设计 §5.4 / D1：路径需要消毒的条目保留（数据不得丢失），但必须报告。
+        let outcome = ExtractionWorkflow::with_source_cleaner(&seven_zip, RemoveSource)
+            .extract(&archive)
+            .expect("a sanitized path must not fail the whole input");
 
-        assert!(
-            matches!(result, Err(ExtractionError::UnsafeOutput { .. })),
-            "unexpected result: {result:?}"
-        );
-        assert!(archive.is_file(), "unsafe archive must be preserved");
         assert!(
             !escaped.exists(),
             "archive entry must not escape the workspace"
         );
+        assert!(
+            outcome.warnings.iter().any(|warning| matches!(
+                warning,
+                ExtractionWarning::UnsafeEntriesSkipped { sanitized, .. }
+                    if sanitized.iter().any(|entry| entry.contains(&escaped_name))
+            )),
+            "the sanitized entry must be named in the report: {:?}",
+            outcome.warnings
+        );
         assert_eq!(
-            std::fs::read_dir(sandbox.path()).unwrap().count(),
-            1,
-            "unsafe archive must not commit output"
+            outcome.output,
+            sandbox.path().join(&escaped_name),
+            "the sanitized entry must be committed inside the archive directory"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&outcome.output).expect("read committed entry"),
+            "must not escape"
         );
     }
 
@@ -1755,6 +2065,620 @@ mod tests {
         assert!(content.starts_with(b"ezz zip volume payload\n"));
         assert!(!first.exists(), "first ZIP volume must be cleaned");
         assert!(!final_volume.exists(), "final ZIP volume must be cleaned");
+    }
+
+    /// 符号链接条目：逃逸的必须被报告且不得以链接形态提交，内部的保留（R4 同批的 D1 行为）。
+    #[test]
+    #[ignore = "requires cargo xtask prepare"]
+    fn symbolic_link_entries_do_not_fail_the_input() {
+        let seven_zip = prepared_seven_zip();
+        assert!(
+            seven_zip.is_file(),
+            "run `cargo xtask prepare` before this test"
+        );
+
+        let sandbox = tempfile::tempdir().expect("create test sandbox");
+        let archive = sandbox.path().join("links.zip");
+        let file = std::fs::File::create(&archive).expect("create ZIP");
+        let mut writer = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default();
+        writer
+            .add_symlink("escape-link", "../outside.txt", options)
+            .expect("add escaping symlink");
+        writer
+            .add_symlink("inner-link", "target.txt", options)
+            .expect("add inner symlink");
+        writer
+            .start_file("target.txt", options)
+            .expect("start entry");
+        writer.write_all(b"payload\n").expect("write entry");
+        writer.finish().expect("finish ZIP");
+
+        let outcome = ExtractionWorkflow::with_source_cleaner(&seven_zip, RemoveSource)
+            .extract(&archive)
+            .expect("symbolic links must not fail the whole input");
+
+        let reported = outcome
+            .warnings
+            .iter()
+            .find_map(|warning| match warning {
+                ExtractionWarning::UnsafeEntriesSkipped {
+                    discarded,
+                    sanitized,
+                } => Some((discarded, sanitized)),
+                _ => None,
+            })
+            .expect("the escaping link must be reported");
+        assert!(
+            reported
+                .0
+                .iter()
+                .any(|path| path.to_string_lossy().contains("escape-link"))
+                || reported.1.iter().any(|name| name.contains("escape-link")),
+            "the escaping link must be named: discarded={:?} sanitized={:?}",
+            reported.0,
+            reported.1
+        );
+
+        let committed_escape = outcome.output.join("escape-link");
+        if committed_escape.exists() {
+            assert!(
+                !std::fs::symlink_metadata(&committed_escape)
+                    .expect("inspect committed entry")
+                    .file_type()
+                    .is_symlink(),
+                "an escaping link must not be committed as a link"
+            );
+        }
+
+        let committed_inner = outcome.output.join("inner-link");
+        let is_link = std::fs::symlink_metadata(&committed_inner)
+            .map(|metadata| metadata.file_type().is_symlink())
+            .unwrap_or(false);
+        if is_link {
+            assert_eq!(
+                std::fs::read_link(&committed_inner).expect("read committed link"),
+                Path::new("target.txt"),
+                "a link inside the result must be preserved as-is"
+            );
+        }
+    }
+
+    /// 剔除平台元数据后没有内容：降级成功 + 报告（设计 §5.1 门 3）。
+    #[test]
+    #[ignore = "requires cargo xtask prepare"]
+    fn archive_with_only_platform_metadata_is_a_reported_degraded_success() {
+        let seven_zip = prepared_seven_zip();
+        assert!(
+            seven_zip.is_file(),
+            "run `cargo xtask prepare` before this test"
+        );
+
+        let sandbox = tempfile::tempdir().expect("create test sandbox");
+        let archive = sandbox.path().join("meta.zip");
+        let file = std::fs::File::create(&archive).expect("create ZIP");
+        let mut writer = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default();
+        writer
+            .start_file("__MACOSX/junk", options)
+            .expect("start entry");
+        writer.write_all(b"junk\n").expect("write entry");
+        writer
+            .start_file(".DS_Store", options)
+            .expect("start entry");
+        writer.write_all(b"ds\n").expect("write entry");
+        writer.finish().expect("finish ZIP");
+
+        let outcome = ExtractionWorkflow::with_source_cleaner(&seven_zip, RemoveSource)
+            .extract(&archive)
+            .expect("an archive with only platform metadata must not fail");
+
+        assert!(
+            outcome.output.is_dir(),
+            "an empty result must still have a final path: {:?}",
+            outcome.output
+        );
+        assert_eq!(
+            std::fs::read_dir(&outcome.output)
+                .expect("read empty result")
+                .count(),
+            0,
+            "the committed result must be empty"
+        );
+        assert!(
+            outcome.warnings.iter().any(|warning| matches!(
+                warning,
+                ExtractionWarning::EmptyAfterMetadataRemoval { removed } if !removed.is_empty()
+            )),
+            "the empty result must be reported: {:?}",
+            outcome.warnings
+        );
+    }
+
+    /// 逃逸不变量本身（设计 §5.4）：工作目录内的改动不算逃逸，归档所在目录的新条目算。
+    #[test]
+    fn escape_invariant_detects_changes_outside_the_workspace() {
+        let sandbox = tempfile::tempdir().expect("create test sandbox");
+        let workspace = sandbox.path().join(".ezz-work-test");
+        std::fs::create_dir(&workspace).expect("create workspace");
+
+        let snapshot = directory_snapshot(sandbox.path(), &workspace).expect("snapshot");
+        assert!(validate_escape_invariant(sandbox.path(), &workspace, &snapshot).is_ok());
+
+        std::fs::write(workspace.join("file.txt"), b"inside").expect("write inside workspace");
+        assert!(
+            validate_escape_invariant(sandbox.path(), &workspace, &snapshot).is_ok(),
+            "changes inside the workspace are not an escape"
+        );
+
+        std::fs::write(sandbox.path().join("escaped.txt"), b"outside").expect("write outside");
+        assert!(
+            matches!(
+                validate_escape_invariant(sandbox.path(), &workspace, &snapshot),
+                Err(ExtractionError::UnsafeOutput { .. })
+            ),
+            "a new entry outside the workspace must break the invariant"
+        );
+    }
+
+    #[test]
+    fn volume_suffixes_are_recognized() {
+        assert_eq!(numeric_extension(Path::new("data.001")), Some(1));
+        assert_eq!(numeric_extension(Path::new("data.003")), Some(3));
+        assert_eq!(numeric_extension(Path::new("data.01")), None);
+        assert_eq!(numeric_extension(Path::new("data.zip")), None);
+        assert_eq!(numeric_extension(Path::new("data")), None);
+
+        assert_eq!(zip_volume_sequence(Path::new("data.z01")), Some(1));
+        assert_eq!(zip_volume_sequence(Path::new("data.Z09")), Some(9));
+        assert_eq!(zip_volume_sequence(Path::new("data.z1")), None);
+        assert_eq!(zip_volume_sequence(Path::new("data.zip")), None);
+        assert!(has_zip_extension(Path::new("data.ZIP")));
+
+        assert_eq!(
+            archive_stem(Path::new("archive.tar.gz")),
+            OsString::from("archive.tar")
+        );
+        assert_eq!(
+            archive_stem(Path::new("no-extension")),
+            OsString::from("no-extension")
+        );
+
+        let volume = rar_volume_name(Path::new("book.part002.rar")).expect("rar volume name");
+        assert_eq!(volume.prefix, "book");
+        assert_eq!(volume.sequence, 2);
+        assert_eq!(volume.width, 3);
+        assert_eq!(volume.extension, "rar");
+        assert_eq!(
+            rar_volume_path(Path::new("C:/data"), &volume, 7),
+            PathBuf::from("C:/data/book.part007.rar")
+        );
+        assert!(rar_volume_name(Path::new("book.rar")).is_none());
+        assert!(rar_volume_name(Path::new("book.part.rar")).is_none());
+        assert!(rar_volume_name(Path::new("book.part01.zip")).is_none());
+    }
+
+    #[test]
+    fn destination_names_follow_the_conflict_rules() {
+        let sandbox = tempfile::tempdir().expect("create test sandbox");
+        let parent = sandbox.path();
+
+        let files: Vec<String> =
+            unique_destination_candidates(parent, OsStr::new("archive.tar.gz"), CommitKind::File)
+                .take(3)
+                .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+                .collect();
+        assert_eq!(
+            files,
+            ["archive.tar.gz", "archive.tar (1).gz", "archive.tar (2).gz"]
+        );
+
+        // 目录整体递增：不得把最后一个“扩展名”拆开（§5.3）。
+        let directories: Vec<String> =
+            unique_destination_candidates(parent, OsStr::new("archive.tar"), CommitKind::Directory)
+                .take(3)
+                .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+                .collect();
+        assert_eq!(
+            directories,
+            ["archive.tar", "archive.tar (1)", "archive.tar (2)"]
+        );
+    }
+
+    #[test]
+    fn empty_result_never_overwrites_an_existing_entry() {
+        let sandbox = tempfile::tempdir().expect("create test sandbox");
+        std::fs::write(sandbox.path().join("payload"), b"existing").expect("create existing file");
+
+        let created =
+            commit_empty_directory(sandbox.path(), OsStr::new("payload")).expect("commit empty");
+
+        assert_eq!(
+            created.file_name().unwrap().to_string_lossy(),
+            "payload (1)"
+        );
+        assert!(created.is_dir());
+        assert_eq!(
+            std::fs::read_to_string(sandbox.path().join("payload")).expect("read existing"),
+            "existing"
+        );
+    }
+
+    /// 手写一个最小 tar：`zip` crate 会把反斜杠改写成下划线，所以盘符前缀条目只能这样造。
+    fn write_tar(path: &Path, entries: &[(&str, &[u8])]) {
+        let mut bytes = Vec::new();
+        for (name, data) in entries {
+            let mut header = [0_u8; 512];
+            header[..name.len()].copy_from_slice(name.as_bytes());
+            header[100..108].copy_from_slice(b"0000644\0");
+            header[108..116].copy_from_slice(b"0000000\0");
+            header[116..124].copy_from_slice(b"0000000\0");
+            header[124..136].copy_from_slice(format!("{:011o}\0", data.len()).as_bytes());
+            header[136..148].copy_from_slice(b"00000000000\0");
+            header[156] = b'0';
+            header[148..156].copy_from_slice(b"        ");
+            let checksum: u32 = header.iter().map(|byte| u32::from(*byte)).sum();
+            header[148..156].copy_from_slice(format!("{checksum:06o}\0 ").as_bytes());
+            bytes.extend_from_slice(&header);
+            bytes.extend_from_slice(data);
+            bytes.extend(std::iter::repeat_n(0_u8, (512 - data.len() % 512) % 512));
+        }
+        bytes.extend(std::iter::repeat_n(0_u8, 1024));
+        std::fs::write(path, &bytes).expect("write tar");
+    }
+
+    /// 盘符前缀条目（`C:\drive.txt`）：7-Zip 读取时会把它改写成 `C:_drive.txt`，提取时再
+    /// 把非法字符 `:` 换成 `_`。数据必须保留在结果内，且必须报告（§5.4）。
+    ///
+    /// 用 tar 而不是 zip：`zip` crate 会在写入时就把反斜杠换成下划线，造不出真的盘符条目。
+    #[test]
+    #[ignore = "requires cargo xtask prepare"]
+    fn drive_prefixed_entries_are_sanitized_and_reported() {
+        let seven_zip = prepared_seven_zip();
+        assert!(
+            seven_zip.is_file(),
+            "run `cargo xtask prepare` before this test"
+        );
+
+        let sandbox = tempfile::tempdir().expect("create test sandbox");
+        let archive = sandbox.path().join("drive.tar");
+        write_tar(
+            &archive,
+            &[("C:\\drive.txt", b"drive payload"), ("keep.txt", b"keep")],
+        );
+
+        let outcome = ExtractionWorkflow::with_source_cleaner(&seven_zip, RemoveSource)
+            .extract(&archive)
+            .expect("a drive-prefixed entry must not fail the whole input");
+
+        let sanitized = outcome
+            .warnings
+            .iter()
+            .find_map(|warning| match warning {
+                ExtractionWarning::UnsafeEntriesSkipped { sanitized, .. } => Some(sanitized),
+                _ => None,
+            })
+            .expect("the drive-prefixed entry must be reported");
+        assert!(
+            sanitized.iter().any(|name| name.contains("drive.txt")),
+            "the entry must be named in the report: {sanitized:?}"
+        );
+
+        // 数据不得丢失：必须落在结果内（名字会被消毒成合法文件名）。
+        assert!(outcome.output.is_dir(), "{:?}", outcome.output);
+        let mut found_payload = false;
+        for entry in std::fs::read_dir(&outcome.output).expect("read result") {
+            let entry = entry.expect("result entry");
+            if entry.file_type().expect("file type").is_file()
+                && std::fs::read(entry.path()).expect("read entry") == b"drive payload"
+            {
+                found_payload = true;
+            }
+        }
+        assert!(found_payload, "the sanitized entry must keep its data");
+        assert!(outcome.output.join("keep.txt").is_file());
+    }
+
+    /// 绝对路径条目（`/absolute.txt`）：7-Zip 把它重写进工作目录（提交后为 `absolute.txt`）。
+    #[test]
+    #[ignore = "requires cargo xtask prepare"]
+    fn absolute_path_entries_are_sanitized_and_reported() {
+        let seven_zip = prepared_seven_zip();
+        assert!(
+            seven_zip.is_file(),
+            "run `cargo xtask prepare` before this test"
+        );
+
+        let sandbox = tempfile::tempdir().expect("create test sandbox");
+        let archive = sandbox.path().join("absolute.zip");
+        let file = std::fs::File::create(&archive).expect("create ZIP");
+        let mut writer = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default();
+        for name in ["/absolute.txt", "keep.txt"] {
+            writer.start_file(name, options).expect("start entry");
+            writer.write_all(name.as_bytes()).expect("write entry");
+        }
+        writer.finish().expect("finish ZIP");
+
+        let outcome = ExtractionWorkflow::with_source_cleaner(&seven_zip, RemoveSource)
+            .extract(&archive)
+            .expect("an absolute entry path must not fail the whole input");
+
+        let sanitized = outcome
+            .warnings
+            .iter()
+            .find_map(|warning| match warning {
+                ExtractionWarning::UnsafeEntriesSkipped { sanitized, .. } => Some(sanitized),
+                _ => None,
+            })
+            .expect("the absolute entry path must be reported");
+        assert!(
+            sanitized.iter().any(|name| name.contains("absolute.txt")),
+            "the entry must be named in the report: {sanitized:?}"
+        );
+
+        assert!(outcome.output.is_dir(), "{:?}", outcome.output);
+        assert!(
+            outcome.output.join("absolute.txt").is_file(),
+            "the sanitized entry must be kept"
+        );
+        assert!(outcome.output.join("keep.txt").is_file());
+    }
+
+    /// 把最后一个条目的压缩数据末字节改坏（中央目录紧跟在数据之后）。
+    fn corrupt_last_entry_byte(bytes: &mut [u8]) {
+        let eocd = bytes
+            .windows(4)
+            .rposition(|window| window == b"PK\x05\x06")
+            .expect("find end of central directory");
+        let directory_offset = u32::from_le_bytes(
+            bytes[eocd + 16..eocd + 20]
+                .try_into()
+                .expect("offset field"),
+        ) as usize;
+        bytes[directory_offset - 1] ^= 0xFF;
+    }
+
+    /// 单个条目损坏 → 降级成功：其余条目照常提交，**损坏条目也照旧提交**，只点名报告。
+    ///
+    /// 实测：7-Zip 遇到 `CRC Failed` / `Data Error` 时退出码 2，但仍会把（损坏的）内容写进
+    /// 输出。按设计 §5.5 的“层 1 透传”原则，ezz 不修改 7-Zip 写出来的东西 —— 命令行用户
+    /// 会拿到那个坏文件与一条错误，ezz 用户也同样拿到它，区别只在于 ezz 把它写进结构化警告。
+    #[test]
+    #[ignore = "requires cargo xtask prepare"]
+    fn a_corrupted_entry_is_committed_and_reported_while_the_rest_is_kept() {
+        let seven_zip = prepared_seven_zip();
+        assert!(
+            seven_zip.is_file(),
+            "run `cargo xtask prepare` before this test"
+        );
+
+        let sandbox = tempfile::tempdir().expect("create test sandbox");
+        let archive = sandbox.path().join("corrupted.zip");
+        let file = std::fs::File::create(&archive).expect("create ZIP");
+        let mut writer = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        writer.start_file("good.txt", options).expect("start entry");
+        writer.write_all(b"good content").expect("write entry");
+        writer
+            .start_file("third.txt", options)
+            .expect("start entry");
+        writer.write_all(b"third content").expect("write entry");
+        // 故意写在最后：`corrupt_last_entry_byte` 改坏的正是最后一个条目的数据。
+        writer.start_file("bad.txt", options).expect("start entry");
+        writer
+            .write_all(b"payload-to-corrupt")
+            .expect("write entry");
+        writer.finish().expect("finish ZIP");
+
+        let mut bytes = std::fs::read(&archive).expect("read ZIP");
+        corrupt_last_entry_byte(&mut bytes);
+        std::fs::write(&archive, &bytes).expect("write corrupted ZIP");
+
+        let outcome = ExtractionWorkflow::with_source_cleaner(&seven_zip, RemoveSource)
+            .extract(&archive)
+            .expect("a corrupted entry must not fail the whole input");
+
+        let reported = outcome
+            .warnings
+            .iter()
+            .find_map(|warning| match warning {
+                ExtractionWarning::FailedEntries { entries } => Some(entries),
+                _ => None,
+            })
+            .expect("the corrupted entry must be reported");
+        assert!(
+            reported.iter().any(|entry| entry.contains("bad.txt")),
+            "the corrupted entry must be named: {reported:?}"
+        );
+
+        // 三个顶层项 → 结果是归档名命名的目录（§5.2）。
+        assert!(outcome.output.is_dir(), "{:?}", outcome.output);
+        assert!(
+            outcome.output.join("good.txt").is_file() && outcome.output.join("third.txt").is_file(),
+            "healthy entries must still be committed"
+        );
+        // 层 1 透传（§5.5）：7-Zip 把损坏的条目也写出来了，ezz 不改它写出来的东西，
+        // 只是把条目名写进结构化警告。命令行用户与 ezz 用户拿到的结果因此一致。
+        assert!(
+            outcome.output.join("bad.txt").is_file(),
+            "the corrupted entry is written by 7-Zip and must not be removed by ezz"
+        );
+    }
+
+    /// Unicode 与空格文件名：提交名必须原样保留，冲突时仍按 §5.3 递增序号。
+    #[test]
+    #[ignore = "requires cargo xtask prepare"]
+    fn unicode_and_space_names_are_committed_unchanged() {
+        let seven_zip = prepared_seven_zip();
+        assert!(
+            seven_zip.is_file(),
+            "run `cargo xtask prepare` before this test"
+        );
+
+        let sandbox = tempfile::tempdir().expect("create test sandbox");
+        let source = sandbox.path().join("source");
+        std::fs::create_dir(&source).expect("create source directory");
+        let name = "报告 汇总 (最终).txt";
+        std::fs::write(source.join(name), b"content").expect("write source file");
+        let archive = sandbox.path().join("unicode.zip");
+        create_archive(&seven_zip, &source, &archive, &[name]);
+
+        let workflow = ExtractionWorkflow::with_source_cleaner(&seven_zip, RemoveSource);
+        let first = workflow.extract(&archive).expect("first extraction");
+        assert_eq!(first.output.file_name().unwrap().to_string_lossy(), name);
+        assert_eq!(
+            std::fs::read_to_string(&first.output).expect("read committed file"),
+            "content"
+        );
+
+        // 原归档被 RemoveSource 删除，重建一次以验证冲突命名。
+        create_archive(&seven_zip, &source, &archive, &[name]);
+        let second = workflow.extract(&archive).expect("second extraction");
+        assert_eq!(
+            second.output.file_name().unwrap().to_string_lossy(),
+            "报告 汇总 (最终) (1).txt"
+        );
+    }
+
+    /// 特殊文件（FIFO）必须被丢弃并报告（§5.4）。Windows 上无法构造 FIFO，所以只在 Unix 跑。
+    #[cfg(unix)]
+    #[test]
+    fn special_files_are_discarded_and_reported() {
+        let sandbox = tempfile::tempdir().expect("create test sandbox");
+        let root = sandbox.path().join("extracted");
+        std::fs::create_dir(&root).expect("create root");
+        std::fs::write(root.join("keep.txt"), b"keep").expect("write kept file");
+
+        let fifo = root.join("pipe");
+        let status = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .expect("run mkfifo");
+        assert!(status.success(), "mkfifo must create the FIFO");
+
+        let discarded = discard_unsafe_entries(&root).expect("discard unsafe entries");
+
+        assert_eq!(
+            discarded,
+            vec![PathBuf::from("pipe")],
+            "the FIFO must be discarded and named"
+        );
+        assert!(root.join("keep.txt").is_file(), "safe content must be kept");
+        assert!(!fifo.exists(), "the FIFO must be removed");
+    }
+
+    /// 硬链接不可跨越文件系统，因此它不会变成逃逸向量；归档里的硬链接必须当普通文件处理。
+    #[test]
+    #[ignore = "requires cargo xtask prepare"]
+    fn hard_links_are_extracted_as_regular_files() {
+        let seven_zip = prepared_seven_zip();
+        assert!(
+            seven_zip.is_file(),
+            "run `cargo xtask prepare` before this test"
+        );
+
+        let sandbox = tempfile::tempdir().expect("create test sandbox");
+        let source = sandbox.path().join("source");
+        std::fs::create_dir(&source).expect("create source directory");
+        std::fs::write(source.join("original.txt"), b"shared").expect("write original");
+        std::fs::hard_link(source.join("original.txt"), source.join("linked.txt"))
+            .expect("create hard link");
+
+        let archive = sandbox.path().join("hardlinks.7z");
+        let status = std::process::Command::new(&seven_zip)
+            .current_dir(&source)
+            .args(["a", "-t7z", "-snh", "-mx=1", "-bso0", "-bsp0"])
+            .arg(&archive)
+            .args(["original.txt", "linked.txt"])
+            .status()
+            .expect("create archive with 7-Zip");
+        assert!(status.success(), "7-Zip must create the hard-link archive");
+
+        let outcome = ExtractionWorkflow::with_source_cleaner(&seven_zip, RemoveSource)
+            .extract(&archive)
+            .expect("hard links must not fail the input");
+
+        assert!(
+            !outcome
+                .warnings
+                .iter()
+                .any(|warning| matches!(warning, ExtractionWarning::UnsafeEntriesSkipped { .. })),
+            "hard links must not be reported as unsafe: {:?}",
+            outcome.warnings
+        );
+        for name in ["original.txt", "linked.txt"] {
+            let path = if outcome.output.is_dir() {
+                outcome.output.join(name)
+            } else {
+                outcome.output.clone()
+            };
+            assert_eq!(
+                std::fs::read_to_string(&path).expect("read extracted file"),
+                "shared"
+            );
+        }
+    }
+    /// 在不支持符号链接的环境（例如没有权限的 CI）上返回 false，由调用方跳过。
+    fn try_symlink(target: &Path, link: &Path) -> bool {
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(target, link).is_ok()
+        }
+        #[cfg(windows)]
+        {
+            std::os::windows::fs::symlink_file(target, link).is_ok()
+        }
+    }
+
+    #[test]
+    fn unsafe_symbolic_links_are_discarded_while_safe_ones_are_kept() {
+        let sandbox = tempfile::tempdir().expect("create test sandbox");
+        let root = sandbox.path().join("extracted");
+        std::fs::create_dir_all(root.join("nested")).expect("create root");
+        std::fs::write(root.join("target.txt"), b"target").expect("write target");
+        std::fs::write(root.join("nested/keep.txt"), b"keep").expect("write kept file");
+
+        let escaping = try_symlink(Path::new("../outside.txt"), &root.join("escaping"));
+        let dangling = try_symlink(Path::new("missing.txt"), &root.join("dangling"));
+        let absolute = try_symlink(&root.join("target.txt"), &root.join("absolute"));
+        let inside = try_symlink(Path::new("target.txt"), &root.join("inside"));
+        if !(escaping || dangling || absolute || inside) {
+            eprintln!("skipping: this environment cannot create symbolic links");
+            return;
+        }
+
+        let discarded = discard_unsafe_entries(&root).expect("discard unsafe entries");
+        let names: Vec<String> = discarded
+            .iter()
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect();
+
+        if escaping {
+            assert!(names.iter().any(|name| name == "escaping"), "{names:?}");
+        }
+        if dangling {
+            assert!(names.iter().any(|name| name == "dangling"), "{names:?}");
+        }
+        if absolute {
+            assert!(names.iter().any(|name| name == "absolute"), "{names:?}");
+        }
+        if inside {
+            assert!(!names.iter().any(|name| name == "inside"), "{names:?}");
+        }
+        assert!(
+            !names.iter().any(|name| name.contains("keep.txt")),
+            "{names:?}"
+        );
+        assert!(
+            root.join("nested/keep.txt").is_file(),
+            "safe content must be kept"
+        );
+        assert!(
+            discarded.iter().all(|path| path.is_relative()),
+            "reported entries should be relative to the extraction root"
+        );
     }
 
     fn create_archive(seven_zip: &Path, directory: &Path, archive: &Path, inputs: &[&str]) {
