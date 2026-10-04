@@ -39,11 +39,6 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Verify macOS runner architecture
-        if: runner.os == 'macOS'
-        shell: bash
-        run: test "$(uname -m)" = "arm64"
-
       - name: Check formatting
         run: cargo fmt --all -- --check
 
@@ -51,7 +46,7 @@ jobs:
         run: cargo xtask prepare
 
       - name: Run tests
-        run: cargo test --workspace --all-targets --locked --verbose
+        run: cargo test --workspace --all-targets --locked
 
       - name: Run real 7-Zip end-to-end tests
         run: cargo test --workspace --all-targets --locked -- --ignored
@@ -59,96 +54,71 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
-      # 发布物必须在两个平台上真实生成并检查内容：这里是 macOS 打包唯一的执行环境。
-      - name: Read the project version
-        shell: bash
-        run: |
-          version="$(sed -n '/^\[package\]/,/^\[/p' Cargo.toml | grep -m1 '^version' | sed -E 's/.*"([^"]+)".*/\1/')"
-          test -n "$version"
-          echo "project_version=$version" >> "$GITHUB_ENV"
-
+      # 发布物在两个平台上真实生成并检查内容；macOS 打包只有这里能执行。
       - name: Package release artifact
         run: cargo xtask package
 
-      - name: Verify artifact layout (macOS)
+      - name: Verify the packaged artifact (macOS)
         if: runner.os == 'macOS'
         shell: bash
         run: |
           set -eu
+          test "$(uname -m)" = "arm64"
+
+          version="$(sed -n '/^\[package\]/,/^\[/p' Cargo.toml | grep -m1 '^version' | sed -E 's/.*"([^"]+)".*/\1/')"
           dmg=target/dist/ezz-macos-arm64.dmg
           mount=/tmp/ezz-dmg
           test -f "$dmg"
-          hdiutil attach -nobrowse -readonly -mountpoint "$mount" "$dmg"
-
-          test -d "$mount/ezz.app"
-          test -L "$mount/Applications"
-          test "$(readlink "$mount/Applications")" = "/Applications"
-          test -f "$mount/README.md"
-          test -f "$mount/CHANGELOG.md"
-          test -f "$mount/ezz.app/Contents/MacOS/ezz"
-          test -f "$mount/ezz.app/Contents/MacOS/7zz"
-          test -f "$mount/ezz.app/Contents/Resources/ezz.icns"
-          test -f "$mount/ezz.app/Contents/Resources/licenses/ezz-LICENSE.txt"
-          test -f "$mount/ezz.app/Contents/Resources/licenses/unRarLicense.txt"
-
-          # 发布物名里不得出现版本号。
           if ls target/dist | grep -Eq 'ezz-[0-9]+\.[0-9]+'; then
             echo "artifact name contains a version" >&2
             exit 1
           fi
-          plutil -extract CFBundleDisplayName raw "$mount/ezz.app/Contents/Info.plist"
 
-          # Info.plist 的版本必须与 Cargo.toml 一致。
-          version="$project_version"
-          plist_version="$(plutil -extract CFBundleShortVersionString raw "$mount/ezz.app/Contents/Info.plist")"
-          test "$plist_version" = "$version"
-          echo "version is $version, matching Cargo.toml"
-          codesign --verify --deep --strict "$mount/ezz.app"
+          hdiutil attach -nobrowse -readonly -mountpoint "$mount" "$dmg"
+          app="$mount/ezz.app"
+          test -d "$app"
+          test "$(readlink "$mount/Applications")" = "/Applications"
+          test -f "$mount/README.md"
+          test -f "$mount/CHANGELOG.md"
+          test -f "$app/Contents/MacOS/ezz"
+          test -f "$app/Contents/MacOS/7zz"
+          test -f "$app/Contents/Resources/ezz.icns"
+          test -f "$app/Contents/Resources/licenses/ezz-LICENSE.txt"
+          test -f "$app/Contents/Resources/licenses/unRarLicense.txt"
+          plutil -extract CFBundleDisplayName raw "$app/Contents/Info.plist"
+          test "$(plutil -extract CFBundleShortVersionString raw "$app/Contents/Info.plist")" = "$version"
+          codesign --verify --deep --strict "$app"
 
-      - name: Run the packaged application end to end (macOS)
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          set -eu
-          mount=/tmp/ezz-dmg
-          bin="$mount/ezz.app/Contents/MacOS"
-
-          # 子 shell 里会 cd，所以这里的路径必须绝对。
+          # 直接运行包内的二进制：引擎必须与主程序并列。
           work="$PWD/target/e2e"
           rm -rf "$work" && mkdir -p "$work/in"
           printf 'packaged artifact check\n' > "$work/in/payload.txt"
-          (cd "$work/in" && "$bin/7zz" a "$work/archive.zip" payload.txt)
-
-          # 直接运行包内的二进制：引擎必须与主程序并列。
-          "$bin/ezz" "$work/archive.zip"
-
-          test -f "$work/payload.txt"
+          (cd "$work/in" && "$app/Contents/MacOS/7zz" a "$work/archive.zip" payload.txt)
+          "$app/Contents/MacOS/ezz" "$work/archive.zip"
           grep -q "packaged artifact check" "$work/payload.txt"
           hdiutil detach "$mount"
 
-      - name: Verify artifact layout (Windows)
+      - name: Verify the packaged artifact (Windows)
         if: runner.os == 'Windows'
         shell: bash
         run: |
           set -eu
+          version="$(sed -n '/^\[package\]/,/^\[/p' Cargo.toml | grep -m1 '^version' | sed -E 's/.*"([^"]+)".*/\1/')"
           zip=target/dist/ezz-windows-x64.zip
           test -f "$zip"
-          # 发布物名里不得出现版本号。
           if ls target/dist | grep -Eq 'ezz-[0-9]+\.[0-9]+'; then
             echo "artifact name contains a version" >&2
             exit 1
           fi
 
           powershell -NoProfile -Command "Expand-Archive -Force '$zip' target/dist/verify"
-          stage=target/dist/verify/ezz-windows-x64
+          stage="$PWD/target/dist/verify/ezz-windows-x64"
           test -f "$stage/ezz.exe"
           test -f "$stage/7zz.exe"
           test -f "$stage/README.md"
           test -f "$stage/CHANGELOG.md"
           test -f "$stage/licenses/ezz-LICENSE.txt"
           test -f "$stage/licenses/unRarLicense.txt"
-          # VERSIONINFO 的版本必须与 Cargo.toml 一致。
-          version="$project_version"
 
           # PowerShell 看不懂 bash 风格路径，先转成 Windows 路径。
           stage_win="$(cygpath -w "$stage")"
@@ -161,20 +131,10 @@ jobs:
             if (\$info.ProductVersion -ne '$version') { throw \"ProductVersion is \$(\$info.ProductVersion) but Cargo.toml says $version\" }
           "
 
-      - name: Run the packaged application end to end (Windows)
-        if: runner.os == 'Windows'
-        shell: bash
-        run: |
-          set -eu
-          # 子 shell 里会 cd，所以这里的路径必须绝对。
-          stage="$PWD/target/dist/verify/ezz-windows-x64"
+          # 用户拿到 ZIP 之后也是解压再运行，这里照做一遍。
           work="$PWD/target/e2e"
           rm -rf "$work" && mkdir -p "$work/in"
           printf 'packaged artifact check\n' > "$work/in/payload.txt"
           (cd "$work/in" && "$stage/7zz.exe" a "$work/archive.zip" payload.txt)
-
-          # 从解压出来的目录运行，和用户拿到 ZIP 之后的用法一致。
           "$stage/ezz.exe" "$(cygpath -w "$work/archive.zip")"
-
-          test -f "$work/payload.txt"
           grep -q "packaged artifact check" "$work/payload.txt"

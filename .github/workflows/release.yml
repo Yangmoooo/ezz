@@ -40,9 +40,6 @@ jobs:
         shell: bash
         run: test "$(uname -m)" = "arm64"
 
-      - name: Prepare fixed 7-Zip
-        run: cargo xtask prepare
-
       - name: Package desktop application
         run: cargo xtask package
 
