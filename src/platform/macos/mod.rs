@@ -17,9 +17,7 @@ use std::error::Error;
 use std::path::{Path, PathBuf};
 
 use super::RunOutcome;
-use super::common::{
-    PlatformPaths, initialize_logging, password_prompt_text, report_outcome, truncate_middle,
-};
+use super::common::{PlatformPaths, initialize_logging, password_prompt_message, report_outcome};
 
 mod notifications;
 
@@ -30,10 +28,6 @@ pub(crate) use notifications::show_notification;
 /// 0 表示只让出一个 run loop 回合：同一次激活里已经排队的打开事件先被派发（§3.3
 /// "处理完就退出"）。之后再到达的交付由 LaunchServices 重新启动应用处理。
 const QUIT_AFTER: f64 = 0.0;
-
-/// 弹窗里文件名的字符预算：`NSAlert` 会自己长高长宽，两行大约能放下这么多字。
-/// 超过就中间省略（Windows 侧是真实测量，见 `platform/windows/dialog.rs`）。
-const NAME_BUDGET: usize = 90;
 
 struct AppDelegateIvars {
     workflow: ExtractionWorkflow,
@@ -159,21 +153,15 @@ struct MacPasswordPrompt;
 impl PasswordPrompt for MacPasswordPrompt {
     fn request_password(
         &self,
-        input: &Path,
+        _input: &Path,
         previous_attempt_failed: bool,
     ) -> Option<PasswordResponse> {
         let mtm = MainThreadMarker::new().expect("password prompt must run on the main thread");
         let alert = NSAlert::new(mtm);
         alert.setMessageText(ns_string!("Password required"));
-        let filename = input
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| input.as_os_str().to_string_lossy().into_owned());
-        // 提示词与文件名在同一句话里（§7）：短名字自然，长名字只从句尾省略。
-        // `NSAlert` 会自己长高长宽，所以“最多两行”在这里靠名字的字符预算近似约束。
-        alert.setInformativeText(&NSString::from_str(&password_prompt_text(
+        // 弹窗里不显示文件名（§7）：它在通知与日志里，这里只问密码。见 Windows 侧的同样取舍。
+        alert.setInformativeText(&NSString::from_str(password_prompt_message(
             previous_attempt_failed,
-            &truncate_middle(&filename, NAME_BUDGET),
         )));
         alert.addButtonWithTitle(ns_string!("Extract"));
         alert.addButtonWithTitle(ns_string!("Cancel"));

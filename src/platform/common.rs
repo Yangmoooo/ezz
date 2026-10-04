@@ -171,57 +171,17 @@ fn display_name(path: &Path) -> String {
         .unwrap_or_else(|| path.display().to_string())
 }
 
-/// 密码弹窗第一行的说明文字（设计 §7）。
+/// 密码弹窗的提示词（设计 §7）。
 ///
-/// 文件名接在冒号后面（`password_prompt_text`），所以这句必须短到能独占一行：
-/// 这样长名字被省略时，提示词永远完整。两个平台的文案都在这里，改词只改一处。
+/// 弹窗里**不显示文件名**：它在通知与日志里，日志也会写清楚是哪个输入。这样提示词很短、
+/// 只有一行，也不需要任何测量或裁剪（与 7-Zip 的做法一致）。
+/// 两个平台共用这一处文案，改词只改这里。
 pub fn password_prompt_message(previous_attempt_failed: bool) -> &'static str {
     if previous_attempt_failed {
         "The password was incorrect. Try again:"
     } else {
         "Enter the password:"
     }
-}
-
-/// 密码弹窗的完整一句话：`Enter the password: <name>`。
-///
-/// 名字跟在同一行而不是另起一行（设计 §7）：短名字看起来自然，长名字由
-/// `truncate_middle` 从句尾省略。`previous_attempt_failed` 时换成另一种文案。
-///
-/// Windows 侧不用它（那边要先测量再裁剪，用的是 `password_prompt_with_message`），
-/// 但保留在这里是为了用例能在任意主机上跑。
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-pub fn password_prompt_text(previous_attempt_failed: bool, filename: &str) -> String {
-    password_prompt_with_message(password_prompt_message(previous_attempt_failed), filename)
-}
-
-/// 用给定的提示词拼出完整一句话。
-///
-/// Windows 侧需要先按测量结果裁剪文件名，所以它分两步用：先拿提示词，再拼这一句。
-pub fn password_prompt_with_message(message: &str, filename: &str) -> String {
-    format!("{message} {filename}")
-}
-
-/// 名字过长时从中间省略（macOS 用；Windows 由系统在绘制时处理）。
-///
-/// 放在这里而不是 macOS 模块里，是为了让它的用例在任意主机上都能跑。
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-///
-/// 保留开头与结尾：文件名最有信息量的部分正是这两端（`archive…part3.rar`）。按**字符**
-/// 而不是字节计数，避免把 Unicode 名字切成半个字符。
-pub fn truncate_middle(name: &str, limit: usize) -> String {
-    let characters: Vec<char> = name.chars().collect();
-    if characters.len() <= limit || limit < 3 {
-        return name.to_owned();
-    }
-
-    let keep = limit - 1; // 一个字符留给省略号
-    let head = keep.div_ceil(2);
-    let tail = keep - head;
-    let mut shortened: String = characters[..head].iter().collect();
-    shortened.push('…');
-    shortened.extend(&characters[characters.len() - tail..]);
-    shortened
 }
 
 fn log_warning(warning: &ExtractionWarning) {
@@ -271,41 +231,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn password_prompt_text_appends_the_name_to_one_sentence() {
-        assert_eq!(
-            password_prompt_text(false, "archive.7z"),
-            "Enter the password: archive.7z"
-        );
-        assert_eq!(
-            password_prompt_text(true, "archive.7z"),
-            "The password was incorrect. Try again: archive.7z"
-        );
-    }
-
-    #[test]
     fn password_prompt_message_reports_a_previous_failure() {
         assert_eq!(password_prompt_message(false), "Enter the password:");
         assert_eq!(
             password_prompt_message(true),
             "The password was incorrect. Try again:"
         );
-    }
-
-    #[test]
-    fn truncate_middle_keeps_both_ends() {
-        assert_eq!(truncate_middle("archive.7z", 20), "archive.7z");
-        assert_eq!(
-            truncate_middle("averyveryverylongarchive.7z", 16),
-            "averyver…hive.7z"
-        );
-    }
-
-    #[test]
-    fn truncate_middle_counts_characters_not_bytes() {
-        let shortened = truncate_middle("归档文件非常长的一个名字.7z", 10);
-        assert_eq!(shortened.chars().count(), 10);
-        assert!(shortened.starts_with('归'));
-        assert!(shortened.ends_with("7z"));
     }
 
     fn outcome_with(warnings: Vec<ExtractionWarning>) -> ExtractionOutcome {
