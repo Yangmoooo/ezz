@@ -8,20 +8,28 @@ use std::path::Path;
 
 use ezz::{PasswordPrompt, PasswordResponse};
 use log::warn;
-use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+use windows::Win32::Foundation::{HWND, LPARAM, RECT, WPARAM};
+use windows::Win32::Graphics::Gdi::{
+    DEFAULT_GUI_FONT, GetDC, GetStockObject, GetTextExtentPoint32W, HGDIOBJ, ReleaseDC,
+    SelectObject,
+};
 use windows::Win32::UI::Controls::{
     BST_CHECKED, EM_SETLIMITTEXT, EM_SETPASSWORDCHAR, IsDlgButtonChecked,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    BM_SETCHECK, BN_CLICKED, DialogBoxParamW, EndDialog, GWLP_USERDATA, GetDlgItemTextW,
-    GetWindowLongPtrW, ICON_BIG, ICON_SMALL, IDCANCEL, IDOK, LoadIconW, SendDlgItemMessageW,
-    SendMessageW, SetDlgItemTextW, SetForegroundWindow, SetWindowLongPtrW, WM_CLOSE, WM_COMMAND,
-    WM_INITDIALOG, WM_SETICON,
+    BM_SETCHECK, BN_CLICKED, DialogBoxParamW, EndDialog, GWLP_USERDATA, GetClientRect, GetDlgItem,
+    GetDlgItemTextW, GetWindowLongPtrW, ICON_BIG, ICON_SMALL, IDCANCEL, IDOK, LoadIconW,
+    SendDlgItemMessageW, SendMessageW, SetDlgItemTextW, SetForegroundWindow, SetWindowLongPtrW,
+    WM_CLOSE, WM_COMMAND, WM_GETFONT, WM_INITDIALOG, WM_SETICON,
 };
 use windows::core::PCWSTR;
 
 /// 密码长度上限（与原实现一致）。
 const PASSWORD_LIMIT: usize = 1024;
+
+/// 测量文字宽度时留出的余量（像素）：静态控件的绘制与 `GetTextExtentPoint32W` 的估算
+/// 可能差一两个像素，宁可短一点。
+const WIDTH_MARGIN: i32 = 4;
 
 /// 对话框按钮的命令 ID。取值沿用 winuser.h 的 `IDOK` / `IDCANCEL`（它们是
 /// `MESSAGEBOX_RESULT` 类型，不能直接用在控件 ID 的位置上）。
@@ -156,11 +164,14 @@ unsafe extern "system" fn dialog_proc(
 /// 只能由持有有效窗口句柄的对话框过程调用。
 unsafe fn initialize_controls(window: HWND, context: &DialogContext) {
     let message = super::wide(&context.message);
-    let filename = super::wide(&context.filename);
-    // SAFETY: 控件 ID 来自资源脚本；两个缓冲区都以 NUL 结尾且在调用期间存活。
-    // 文件名一行带 `SS_PATHELLIPSIS`，长度由系统在绘制时处理。
+    // SAFETY: 控件 ID 来自资源脚本；缓冲区以 NUL 结尾且在调用期间存活。
     unsafe {
         let _ = SetDlgItemTextW(window, super::ID_MESSAGE, PCWSTR(message.as_ptr()));
+    }
+    let filename = fit_filename(window, super::ID_FILENAME, &context.filename);
+    let filename = super::wide(&filename);
+    // SAFETY: 同上。
+    unsafe {
         let _ = SetDlgItemTextW(window, super::ID_FILENAME, PCWSTR(filename.as_ptr()));
     }
 
@@ -206,6 +217,89 @@ unsafe fn initialize_controls(window: HWND, context: &DialogContext) {
         // 无主窗口的应用刚被调用起来：确保对话框出现在前台（与 macOS 侧的 activate 对应）。
         let _ = SetForegroundWindow(window);
     }
+}
+
+/// 把文件名裁到实际能显示的长度（用控件自己的字体测量）。
+///
+/// `SS_PATHELLIPSIS` 是首选，但它要求控件不自动换行（已在模板里带上
+/// `SS_LEFTNOWORDWRAP`），而且省略行为在个别主题/风格下会失效。这里多做一次真实测量：
+/// **送进控件的字符串本身**就不会被硬截断，无论系统是否省略（设计 §7）。
+fn fit_filename(window: HWND, identifier: i32, name: &str) -> String {
+    // SAFETY: 控件属于当前对话框，DC 在函数返回前释放，字体用完恢复。
+    unsafe {
+        let Ok(control) = GetDlgItem(Some(window), identifier) else {
+            return name.to_owned();
+        };
+        let mut bounds = RECT::default();
+        if GetClientRect(control, &raw mut bounds).is_err() {
+            return name.to_owned();
+        }
+        let limit = bounds.right - WIDTH_MARGIN;
+        if limit <= 0 {
+            return name.to_owned();
+        }
+
+        let device = GetDC(Some(control));
+        if device.is_invalid() {
+            return name.to_owned();
+        }
+        let font = SendMessageW(control, WM_GETFONT, None, None).0;
+        let previous = if font == 0 {
+            SelectObject(device, GetStockObject(DEFAULT_GUI_FONT))
+        } else {
+            SelectObject(device, HGDIOBJ(font as *mut core::ffi::c_void))
+        };
+
+        let width = |text: &str| -> i32 {
+            let text = super::wide(text);
+            let mut size = Default::default();
+            // SAFETY: `device` 已选好字体；`text` 是有效的 UTF-16 切片（末尾是终止符，不计入长度）。
+            if GetTextExtentPoint32W(device, &text[..text.len() - 1], &mut size).as_bool() {
+                size.cx
+            } else {
+                0
+            }
+        };
+
+        let fitted = fit_to_width(name, limit, &width);
+
+        SelectObject(device, previous);
+        ReleaseDC(Some(control), device);
+        fitted
+    }
+}
+
+/// 反复在中间省略，直到测得的宽度不超过 `limit`（纯逻辑，便于推理）。
+///
+/// 先从字符数上二分，再逐字符收紧：`GetTextExtentPoint32W` 的宽度对字符数不是严格单调的
+/// （每个字符宽度不同），二分找到一个上限后逐字符验证。
+fn fit_to_width(name: &str, limit: i32, width: &dyn Fn(&str) -> i32) -> String {
+    if width(name) <= limit {
+        return name.to_owned();
+    }
+
+    let characters = name.chars().count();
+    let (mut low, mut high) = (3_usize, characters);
+    let mut best: Option<usize> = None;
+    while low <= high {
+        let middle = low + (high - low) / 2;
+        if width(&super::super::common::truncate_middle(name, middle)) <= limit {
+            best = Some(middle);
+            low = middle + 1;
+        } else if middle == 0 {
+            break;
+        } else {
+            high = middle - 1;
+        }
+    }
+
+    let mut kept = best.unwrap_or(3);
+    let mut fitted = super::super::common::truncate_middle(name, kept);
+    while width(&fitted) > limit && kept > 3 {
+        kept -= 1;
+        fitted = super::super::common::truncate_middle(name, kept);
+    }
+    fitted
 }
 
 /// 取回挂在窗口上的上下文。
@@ -332,28 +426,73 @@ mod tests {
         let long_name = "a-very-long-archive-name-that-cannot-fit-2026-10-04.7z";
         let driver = std::thread::spawn(move || {
             let window = wait_for_dialog();
-            // SAFETY: 控件属于本进程的对话框；缓冲区由 `GetDlgItemTextW` 填充。
+            // SAFETY: 控件属于本进程的对话框。
             unsafe {
+                let control = windows::Win32::UI::WindowsAndMessaging::GetDlgItem(
+                    Some(window),
+                    super::super::ID_FILENAME,
+                )
+                .expect("filename control");
                 let style = windows::Win32::UI::WindowsAndMessaging::GetWindowLongPtrW(
-                    windows::Win32::UI::WindowsAndMessaging::GetDlgItem(
-                        Some(window),
-                        super::super::ID_FILENAME,
-                    )
-                    .expect("filename control"),
+                    control,
                     windows::Win32::UI::WindowsAndMessaging::GWL_STYLE,
                 );
-                // winuser.h：`#define SS_PATHELLIPSIS 0x00008000L`。windows crate 没有导出它。
-                const SS_PATHELLIPSIS: isize = 0x0000_8000;
-                assert_eq!(
-                    style & SS_PATHELLIPSIS,
-                    SS_PATHELLIPSIS,
-                    "the filename line must ellipsize in the middle"
-                );
+                // 先把对话框关掉，再把观察结果带回去：若先断言，失败会让主线程永远卡在模态
+                // 循环里（driver 线程已经死了，没人再关窗口）。
                 drive_dialog("", ID_CANCEL, None, None);
+                style
             }
         });
         let _ = show(Path::new(long_name), false).expect("show the dialog");
-        driver.join().expect("driver thread");
+        let style = driver.join().expect("driver thread");
+
+        // winuser.h：`SS_PATHELLIPSIS` = 0x00008000，`SS_LEFTNOWORDWRAP` = 0x0000000C。
+        // 省略风格必须配合后者：自动换行的 static 只会换行，第二行会落到控件尺寸之外。
+        // windows crate 没有导出这些静态风格常量，所以直接引 winuser.h 的值。
+        const SS_PATHELLIPSIS: isize = 0x0000_8000;
+        const SS_LEFTNOWORDWRAP: isize = 0x0000_000C;
+        assert_eq!(
+            style & SS_PATHELLIPSIS,
+            SS_PATHELLIPSIS,
+            "the filename line must ellipsize in the middle"
+        );
+        assert_eq!(
+            style & SS_LEFTNOWORDWRAP,
+            SS_LEFTNOWORDWRAP,
+            "the ellipsis style needs SS_LEFTNOWORDWRAP"
+        );
+    }
+
+    /// 长文件名必须被我们自己裁到实际能显示的长度。
+    ///
+    /// 不依赖系统是否省略：这里读回送进控件的文本，它必须比原名短且带省略号。
+    #[test]
+    #[ignore = "requires an interactive desktop session"]
+    fn a_long_filename_is_shortened_to_fit_the_control() {
+        let _serial = serial();
+        super::super::initialize_process().expect("initialize process");
+
+        let long_name = "a-very-long-archive-name-that-cannot-possibly-fit-2026-10-04.7z";
+        let full_length = long_name.chars().count();
+        let driver = std::thread::spawn(move || {
+            let window = wait_for_dialog();
+            let mut buffer = [0_u16; 2048];
+            // SAFETY: 控件属于本进程的对话框；`buffer` 可写。
+            let length = unsafe { GetDlgItemTextW(window, super::super::ID_FILENAME, &mut buffer) };
+            let shown = String::from_utf16_lossy(&buffer[..length as usize]);
+            // 同样先关窗口再带结果回去。
+            drive_dialog("", ID_CANCEL, None, None);
+            shown
+        });
+        let _ = show(Path::new(long_name), false).expect("show the dialog");
+        let shown = driver.join().expect("driver thread");
+
+        assert!(
+            shown.chars().count() < full_length,
+            "the name was not shortened: {shown}"
+        );
+        assert!(shown.contains('…'), "expected a middle ellipsis: {shown}");
+        assert!(shown.ends_with("7z"), "the extension must survive: {shown}");
     }
 
     #[test]

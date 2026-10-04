@@ -60,7 +60,13 @@ BEGIN
   LTEXT           "", EZZ_ID_MESSAGE, 8, 4, 184, 10
   /* SS_PATHELLIPSIS：名字太长时由系统从中间省略（保住开头的名称与结尾的扩展名），
      不需要我们按字符数截断，DPI 与字体变化也不会出错。 */
-  LTEXT           "", EZZ_ID_FILENAME, 8, 15, 184, 10, SS_PATHELLIPSIS
+  LTEXT           "", EZZ_ID_MESSAGE, 8, 4, 184, 10
+  /* 文件名太长时由系统从中间省略（保住开头的名称与结尾的扩展名）。
+     **必须带 SS_LEFTNOWORDWRAP**：自动换行的 static 不省略，只会换行，而第二行会落到
+     这个 10 DLU 高的控件外面，看起来就是被截断。 */
+  CONTROL         "", EZZ_ID_FILENAME, "Static",
+                  SS_LEFTNOWORDWRAP | SS_PATHELLIPSIS | WS_CHILD | WS_VISIBLE,
+                  8, 15, 184, 10
   EDITTEXT        EZZ_ID_PASSWORD, 8, 32, 184, 10, ES_PASSWORD | ES_AUTOHSCROLL
   CONTROL         "Remember this password", EZZ_ID_REMEMBER, "Button",
                   BS_AUTOCHECKBOX | WS_TABSTOP, 8, 46, 184, 10

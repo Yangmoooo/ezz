@@ -44,6 +44,7 @@ windows = { version = "0.62", features = [
     "Win32_UI_Shell",
     "Win32_UI_Shell_Common",
     "Win32_UI_WindowsAndMessaging",
+    "Win32_Graphics_Gdi",
     "Data_Xml_Dom",
     "UI_Notifications",
 ] }
