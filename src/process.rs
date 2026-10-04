@@ -12,7 +12,10 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 /// 创建一个不会弹出控制台窗口的子进程。
 pub(crate) fn command(program: impl AsRef<OsStr>) -> Command {
+    #[cfg(windows)]
     let mut command = Command::new(program);
+    #[cfg(not(windows))]
+    let command = Command::new(program);
 
     #[cfg(windows)]
     {

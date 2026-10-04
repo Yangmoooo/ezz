@@ -410,12 +410,14 @@ fn symbolic_link_that_escapes_the_result_is_discarded_and_reported() {
             _ => None,
         })
         .expect("the discarded entry must be reported");
+    // 丢弃清单与消毒清单的类型不同（路径 vs 字符串）：分开断言，不硬拼成一个迭代器。
+    let discarded_named = reported
+        .0
+        .iter()
+        .any(|entry| entry.to_string_lossy().contains("escape"));
+    let sanitized_named = reported.1.iter().any(|entry| entry.contains("escape"));
     assert!(
-        reported
-            .0
-            .iter()
-            .chain(reported.1.iter().map(Path::new))
-            .any(|entry| entry.to_string_lossy().contains("escape")),
+        discarded_named || sanitized_named,
         "the escaping entry must be named in the report: {reported:?}"
     );
 
