@@ -18,29 +18,20 @@ pub struct PlatformPaths {
 impl PlatformPaths {
     pub fn discover() -> Result<Self, Box<dyn Error>> {
         #[cfg(target_os = "macos")]
-        {
-            let home = std::env::var_os("HOME").ok_or("HOME is not set")?;
-            let application_support = PathBuf::from(home)
-                .join("Library")
-                .join("Application Support")
-                .join("ezz");
-            // 密码库与日志同目录：日志不放 ~/Library/Logs（那只对 os_log 有意义）。
-            Ok(Self {
-                password_database: application_support.join("passwords.json"),
-                log_file: application_support.join("ezz.log"),
-            })
-        }
+        let directory = PathBuf::from(std::env::var_os("HOME").ok_or("HOME is not set")?)
+            .join("Library")
+            .join("Application Support")
+            .join("ezz");
 
         #[cfg(target_os = "windows")]
-        {
-            let local =
-                PathBuf::from(std::env::var_os("LOCALAPPDATA").ok_or("LOCALAPPDATA is not set")?);
-            let directory = local.join("ezz");
-            Ok(Self {
-                password_database: directory.join("passwords.json"),
-                log_file: directory.join("ezz.log"),
-            })
-        }
+        let directory =
+            PathBuf::from(std::env::var_os("LOCALAPPDATA").ok_or("LOCALAPPDATA is not set")?)
+                .join("ezz");
+
+        Ok(Self {
+            password_database: directory.join("passwords.json"),
+            log_file: directory.join("ezz.log"),
+        })
     }
 }
 
@@ -207,6 +198,7 @@ fn log_warning(warning: &ExtractionWarning) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ezz::EngineOperation;
 
     #[test]
     fn password_prompt_message_reports_a_previous_failure() {
@@ -261,12 +253,12 @@ mod tests {
                 message: "boom".to_owned(),
             },
             ExtractionError::EngineFailed {
-                operation: "extract",
+                operation: EngineOperation::Extract,
                 exit_code: Some(2),
                 message: "ERROR: nope".to_owned(),
             },
             ExtractionError::EngineFailed {
-                operation: "test",
+                operation: EngineOperation::Test,
                 exit_code: None,
                 message: "ERROR: nope".to_owned(),
             },
@@ -305,7 +297,7 @@ mod tests {
     fn failure_body_never_leaks_the_engine_message() {
         // 引擎原文只进日志，不进通知。
         let verbatim = ExtractionError::EngineFailed {
-            operation: "extract",
+            operation: EngineOperation::Extract,
             exit_code: Some(2),
             message: "ERROR: Data Error : payload/very/long/path.bin".repeat(20),
         };

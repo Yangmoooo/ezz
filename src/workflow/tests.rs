@@ -42,11 +42,7 @@ impl ScriptedPasswordPrompt {
 }
 
 impl PasswordPrompt for ScriptedPasswordPrompt {
-    fn request_password(
-        &self,
-        _input: &Path,
-        _previous_attempt_failed: bool,
-    ) -> Option<PasswordResponse> {
+    fn request_password(&self, _previous_attempt_failed: bool) -> Option<PasswordResponse> {
         self.responses.lock().unwrap().pop_front()
     }
 }
@@ -54,11 +50,7 @@ impl PasswordPrompt for ScriptedPasswordPrompt {
 struct NoResponsePrompt;
 
 impl PasswordPrompt for NoResponsePrompt {
-    fn request_password(
-        &self,
-        _input: &Path,
-        _previous_attempt_failed: bool,
-    ) -> Option<PasswordResponse> {
+    fn request_password(&self, _previous_attempt_failed: bool) -> Option<PasswordResponse> {
         None
     }
 }
@@ -455,18 +447,10 @@ fn parent_directory_entry_is_sanitized_and_reported() {
         .parent()
         .expect("sandbox parent")
         .join(&escaped_name);
-    let file = std::fs::File::create(&archive).expect("create unsafe ZIP");
-    let mut writer = zip::ZipWriter::new(file);
-    writer
-        .start_file(
-            format!("../{escaped_name}"),
-            zip::write::SimpleFileOptions::default(),
-        )
-        .expect("start unsafe ZIP entry");
-    writer
-        .write_all(b"must not escape")
-        .expect("write ZIP entry");
-    writer.finish().expect("finish unsafe ZIP");
+    write_zip(
+        &archive,
+        &[(&format!("../{escaped_name}"), b"must not escape")],
+    );
 
     // 路径需要消毒的条目保留（数据不得丢失），但必须报告。
     let outcome = workflow(&seven_zip)
@@ -1101,18 +1085,10 @@ fn archive_with_only_platform_metadata_is_a_reported_degraded_success() {
 
     let sandbox = tempfile::tempdir().expect("create test sandbox");
     let archive = sandbox.path().join("meta.zip");
-    let file = std::fs::File::create(&archive).expect("create ZIP");
-    let mut writer = zip::ZipWriter::new(file);
-    let options = zip::write::SimpleFileOptions::default();
-    writer
-        .start_file("__MACOSX/junk", options)
-        .expect("start entry");
-    writer.write_all(b"junk\n").expect("write entry");
-    writer
-        .start_file(".DS_Store", options)
-        .expect("start entry");
-    writer.write_all(b"ds\n").expect("write entry");
-    writer.finish().expect("finish ZIP");
+    write_zip(
+        &archive,
+        &[("__MACOSX/junk", b"junk\n"), (".DS_Store", b"ds\n")],
+    );
 
     let outcome = workflow(&seven_zip)
         .extract(&archive)
@@ -1227,14 +1203,13 @@ fn absolute_path_entries_are_sanitized_and_reported() {
 
     let sandbox = tempfile::tempdir().expect("create test sandbox");
     let archive = sandbox.path().join("absolute.zip");
-    let file = std::fs::File::create(&archive).expect("create ZIP");
-    let mut writer = zip::ZipWriter::new(file);
-    let options = zip::write::SimpleFileOptions::default();
-    for name in ["/absolute.txt", "keep.txt"] {
-        writer.start_file(name, options).expect("start entry");
-        writer.write_all(name.as_bytes()).expect("write entry");
-    }
-    writer.finish().expect("finish ZIP");
+    write_zip(
+        &archive,
+        &[
+            ("/absolute.txt", b"/absolute.txt"),
+            ("keep.txt", b"keep.txt"),
+        ],
+    );
 
     let outcome = workflow(&seven_zip)
         .extract(&archive)
@@ -1566,6 +1541,18 @@ fn create_split_archive_with_inputs(
         .status()
         .expect("create split archive with 7-Zip");
     assert!(status.success(), "7-Zip must create split test archive");
+}
+
+/// 用一个或多个条目造一个 ZIP：名字与内容由调用方给定，压缩方式用默认值。
+fn write_zip(archive: &Path, entries: &[(&str, &[u8])]) {
+    let file = std::fs::File::create(archive).expect("create ZIP");
+    let mut writer = zip::ZipWriter::new(file);
+    let options = zip::write::SimpleFileOptions::default();
+    for (name, content) in entries {
+        writer.start_file(*name, options).expect("start entry");
+        writer.write_all(content).expect("write entry");
+    }
+    writer.finish().expect("finish ZIP");
 }
 
 fn prepared_seven_zip() -> PathBuf {

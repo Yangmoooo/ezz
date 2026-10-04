@@ -29,16 +29,9 @@ pub(super) fn commit_output(
         .map_err(|error| file_system_error("read extracted entry from", extracted, error))?;
 
     let parent = input.parent().expect("validated input parent");
-    match entries.len() {
+    let (path, empty) = match entries.len() {
         // 输出为空是事实而不是错误：提交一个以归档命名的空目录，让结果仍有一个最终实际路径。
-        0 => {
-            let path = commit_empty_directory(parent, output_stem)?;
-            Ok(Committed {
-                path,
-                removed_metadata,
-                empty: true,
-            })
-        }
+        0 => (commit_empty_directory(parent, output_stem)?, true),
         1 => {
             let entry = entries.pop().expect("one extracted entry");
             // 目录用 `name (1)`，文件用 `name (1).ext`。
@@ -54,22 +47,18 @@ pub(super) fn commit_output(
                 CommitKind::File
             };
             let path = commit_with_unique_name(&entry.path(), parent, &entry.file_name(), kind)?;
-            Ok(Committed {
-                path,
-                removed_metadata,
-                empty: false,
-            })
+            (path, false)
         }
-        _ => {
-            let path =
-                commit_with_unique_name(extracted, parent, output_stem, CommitKind::Directory)?;
-            Ok(Committed {
-                path,
-                removed_metadata,
-                empty: false,
-            })
-        }
-    }
+        _ => (
+            commit_with_unique_name(extracted, parent, output_stem, CommitKind::Directory)?,
+            false,
+        ),
+    };
+    Ok(Committed {
+        path,
+        removed_metadata,
+        empty,
+    })
 }
 
 /// 提交一个空目录：直接把名字占下来。

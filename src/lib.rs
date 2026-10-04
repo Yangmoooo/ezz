@@ -11,8 +11,11 @@ mod process;
 mod seven_zip;
 mod workflow;
 
-pub use engine::{EngineError, OVERRIDE_VARIABLE, locate_engine};
+/// `cargo xtask prepare` 下载的引擎版本；测试从这里取，避免多处硬编码各说各话。
+pub const SEVEN_ZIP_VERSION: &str = "26.02";
+
+pub use engine::locate_engine;
 pub use workflow::{
-    ExtractionError, ExtractionOutcome, ExtractionWarning, ExtractionWorkflow, PasswordPrompt,
-    PasswordResponse,
+    EngineOperation, ExtractionError, ExtractionOutcome, ExtractionWarning, ExtractionWorkflow,
+    PasswordPrompt, PasswordResponse,
 };

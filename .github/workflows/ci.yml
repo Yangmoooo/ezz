@@ -50,19 +50,23 @@ jobs:
       - name: Prepare fixed 7-Zip
         run: cargo xtask prepare
 
-      - name: Check
-        run: cargo check --workspace --all-targets --locked --verbose
-
       - name: Run tests
         run: cargo test --workspace --all-targets --locked --verbose
 
       - name: Run real 7-Zip end-to-end tests
-        run: cargo test --lib --locked -- --ignored
+        run: cargo test --workspace --all-targets --locked -- --ignored
 
       - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
       # 发布物必须在两个平台上真实生成并检查内容：这里是 macOS 打包唯一的执行环境。
+      - name: Read the project version
+        shell: bash
+        run: |
+          version="$(sed -n '/^\[package\]/,/^\[/p' Cargo.toml | grep -m1 '^version' | sed -E 's/.*"([^"]+)".*/\1/')"
+          test -n "$version"
+          echo "project_version=$version" >> "$GITHUB_ENV"
+
       - name: Package release artifact
         run: cargo xtask package
 
@@ -95,8 +99,7 @@ jobs:
           plutil -extract CFBundleDisplayName raw "$mount/ezz.app/Contents/Info.plist"
 
           # Info.plist 的版本必须与 Cargo.toml 一致。
-          version="$(sed -n '/^\[package\]/,/^\[/p' Cargo.toml | grep -m1 '^version' | sed -E 's/.*"([^"]+)".*/\1/')"
-          test -n "$version"
+          version="$project_version"
           plist_version="$(plutil -extract CFBundleShortVersionString raw "$mount/ezz.app/Contents/Info.plist")"
           test "$plist_version" = "$version"
           echo "version is $version, matching Cargo.toml"
@@ -145,8 +148,7 @@ jobs:
           test -f "$stage/licenses/ezz-LICENSE.txt"
           test -f "$stage/licenses/unRarLicense.txt"
           # VERSIONINFO 的版本必须与 Cargo.toml 一致。
-          version="$(sed -n '/^\[package\]/,/^\[/p' Cargo.toml | grep -m1 '^version' | sed -E 's/.*"([^"]+)".*/\1/')"
-          test -n "$version"
+          version="$project_version"
 
           # PowerShell 看不懂 bash 风格路径，先转成 Windows 路径。
           stage_win="$(cygpath -w "$stage")"

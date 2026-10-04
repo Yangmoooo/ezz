@@ -5,7 +5,6 @@
 //! 内容是一行提示词 + 密码框 + 三个勾选项，不含文件名（它在通知与日志里）。
 
 use std::error::Error;
-use std::path::Path;
 
 use ezz::{PasswordPrompt, PasswordResponse};
 use log::warn;
@@ -45,11 +44,7 @@ struct DialogContext {
 pub(super) struct WindowsPasswordPrompt;
 
 impl PasswordPrompt for WindowsPasswordPrompt {
-    fn request_password(
-        &self,
-        _input: &Path,
-        previous_attempt_failed: bool,
-    ) -> Option<PasswordResponse> {
+    fn request_password(&self, previous_attempt_failed: bool) -> Option<PasswordResponse> {
         match show(previous_attempt_failed) {
             Ok(response) => response,
             Err(error) => {

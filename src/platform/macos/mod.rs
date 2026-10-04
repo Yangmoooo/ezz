@@ -14,7 +14,7 @@ use objc2_foundation::{
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::error::Error;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use super::RunOutcome;
 use super::common::{PlatformPaths, initialize_logging, password_prompt_message, report_outcome};
@@ -51,10 +51,7 @@ define_class!(
         #[unsafe(method(applicationDidFinishLaunching:))]
         fn application_did_finish_launching(&self, _notification: &NSNotification) {
             self.ivars().launched.set(true);
-            let app = NSApplication::sharedApplication(self.mtm());
-            app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
-            #[allow(deprecated)]
-            app.activateIgnoringOtherApps(true);
+            bring_to_front(self.mtm());
 
             // 启动时没有待处理输入才显示选择器：被打开文件启动时，AppKit 会把
             // `openFiles:` 送到本方法之前。
@@ -149,11 +146,7 @@ impl AppDelegate {
 struct MacPasswordPrompt;
 
 impl PasswordPrompt for MacPasswordPrompt {
-    fn request_password(
-        &self,
-        _input: &Path,
-        previous_attempt_failed: bool,
-    ) -> Option<PasswordResponse> {
+    fn request_password(&self, previous_attempt_failed: bool) -> Option<PasswordResponse> {
         let mtm = MainThreadMarker::new().expect("password prompt must run on the main thread");
         let alert = NSAlert::new(mtm);
         alert.setMessageText(ns_string!("Password required"));
@@ -203,10 +196,7 @@ impl PasswordPrompt for MacPasswordPrompt {
         accessory.addSubview(&keep_original);
         alert.setAccessoryView(Some(&accessory));
 
-        // accessory 应用不先激活的话，模态框可能出现在其他窗口后面。
-        let app = NSApplication::sharedApplication(mtm);
-        #[allow(deprecated)]
-        app.activateIgnoringOtherApps(true);
+        bring_to_front(mtm);
 
         if alert.runModal() != NSAlertFirstButtonReturn {
             return None;
@@ -250,15 +240,20 @@ pub fn show_fatal_error(message: &str) {
     let Some(mtm) = MainThreadMarker::new() else {
         return;
     };
-    let app = NSApplication::sharedApplication(mtm);
-    app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
-    #[allow(deprecated)]
-    app.activateIgnoringOtherApps(true);
+    bring_to_front(mtm);
     let alert = NSAlert::new(mtm);
     alert.setMessageText(ns_string!("Ezz could not start"));
     alert.setInformativeText(&NSString::from_str(message));
     alert.addButtonWithTitle(ns_string!("OK"));
     alert.runModal();
+}
+
+/// accessory 应用不先激活的话，模态框可能出现在其他窗口后面。
+fn bring_to_front(mtm: MainThreadMarker) {
+    let app = NSApplication::sharedApplication(mtm);
+    app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
+    #[allow(deprecated)]
+    app.activateIgnoringOtherApps(true);
 }
 
 fn select_files(mtm: MainThreadMarker) -> Vec<PathBuf> {

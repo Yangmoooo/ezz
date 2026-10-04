@@ -64,7 +64,16 @@ fn send(summary: &str, body: &str) -> Result<(), Box<dyn Error>> {
     // 没有 trigger 表示立即投递。
     let request =
         UNNotificationRequest::requestWithIdentifier_content_trigger(&identifier, &content, None);
-    center.addNotificationRequest_withCompletionHandler(&request, None);
+    let handler = RcBlock::new(|error: *mut NSError| {
+        // SAFETY: 回调只在 `error` 非空时读取它。
+        if let Some(error) = unsafe { error.as_ref() } {
+            warn!(
+                "could not deliver the notification: {}",
+                error.localizedDescription()
+            );
+        }
+    });
+    center.addNotificationRequest_withCompletionHandler(&request, Some(&handler));
 
     Ok(())
 }

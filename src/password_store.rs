@@ -89,16 +89,16 @@ impl PasswordStore {
     ///
     /// 不做这一步，保存时会直接覆盖它，用户每次输入的密码都因为加载失败而保存不下来。
     fn quarantine(&self) -> Result<(), String> {
-        if !self.path.exists() {
-            return Ok(());
-        }
-
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|elapsed| elapsed.as_secs())
             .unwrap_or_default();
         let target = self.path.with_extension(format!("json.corrupt-{stamp}"));
-        fs::rename(&self.path, &target).map_err(|error| error.to_string())?;
+        match fs::rename(&self.path, &target) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error.to_string()),
+        }
         let _ = set_private_permissions(&target);
         warn!(
             "kept the unreadable password database as {}",
@@ -112,11 +112,14 @@ impl PasswordStore {
     /// 磁盘格式全部容忍缺失：`passwords` 元素可以是字符串简写，`version` 缺失按 1，
     /// `uses` / `last_used` 缺失按 0，未知字段忽略。
     fn load(&self) -> Result<PasswordDatabase, String> {
-        if !self.path.exists() {
-            return Ok(PasswordDatabase::default());
-        }
-
-        let reader = BufReader::new(File::open(&self.path).map_err(|error| error.to_string())?);
+        let file = match File::open(&self.path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(PasswordDatabase::default());
+            }
+            Err(error) => return Err(error.to_string()),
+        };
+        let reader = BufReader::new(file);
         let file: PasswordDatabaseFile =
             serde_json::from_reader(reader).map_err(|error| error.to_string())?;
         if file.version != DATABASE_VERSION {

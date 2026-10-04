@@ -5,7 +5,6 @@ use std::fs::{self, File};
 use std::io::{self, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::Duration;
 
 #[cfg(target_os = "macos")]
 use plist::{Dictionary, Value};
@@ -124,6 +123,21 @@ fn package_version() -> Result<String, Box<dyn Error>> {
         .ok_or_else(|| "root Cargo.toml is missing package.version".into())
 }
 
+/// 仓库里的文档与许可证原样拷进发布物：文档进 `stage`，许可证进 `licenses`。
+fn copy_docs_and_licenses(
+    root: &Path,
+    stage: &Path,
+    licenses: &Path,
+) -> Result<(), Box<dyn Error>> {
+    fs::copy(root.join("README.md"), stage.join("README.md"))?;
+    fs::copy(root.join("CHANGELOG.md"), stage.join("CHANGELOG.md"))?;
+    fs::copy(root.join("LICENSE"), licenses.join("ezz-LICENSE.txt"))?;
+    for name in ["License.txt", "copying.txt", "man.txt", "unRarLicense.txt"] {
+        fs::copy(root.join("assets/7zip").join(name), licenses.join(name))?;
+    }
+    Ok(())
+}
+
 #[cfg(target_os = "macos")]
 fn package_macos(seven_zip: &Path) -> Result<PathBuf, Box<dyn Error>> {
     let root = workspace_root();
@@ -162,11 +176,7 @@ fn package_macos(seven_zip: &Path) -> Result<PathBuf, Box<dyn Error>> {
         root.join("assets/icon/ezz.icns"),
         resources.join("ezz.icns"),
     )?;
-    // 许可证放在 .app 内：应用被单独拷走时仍然合规。
-    fs::copy(root.join("LICENSE"), licenses.join("ezz-LICENSE.txt"))?;
-    for name in ["License.txt", "copying.txt", "man.txt", "unRarLicense.txt"] {
-        fs::copy(root.join("assets/7zip").join(name), licenses.join(name))?;
-    }
+    copy_docs_and_licenses(&root, &stage, &licenses)?;
     write_macos_plist(&contents.join("Info.plist"), &package_version()?)?;
 
     // 先签嵌套的 7zz，再签应用包。
@@ -189,9 +199,7 @@ fn package_macos(seven_zip: &Path) -> Result<PathBuf, Box<dyn Error>> {
         "verify ezz.app signature",
     )?;
 
-    // DMG 根目录：仓库文件原样拷贝，外加一个指向 /Applications 的符号链接。
-    fs::copy(root.join("README.md"), stage.join("README.md"))?;
-    fs::copy(root.join("CHANGELOG.md"), stage.join("CHANGELOG.md"))?;
+    // DMG 根目录再放一个指向 /Applications 的符号链接。
     std::os::unix::fs::symlink("/Applications", stage.join("Applications"))?;
 
     let archive = dist.join("ezz-macos-arm64.dmg");
@@ -288,13 +296,7 @@ fn package_windows(seven_zip: &Path) -> Result<PathBuf, Box<dyn Error>> {
         stage.join("ezz.exe"),
     )?;
     fs::copy(seven_zip, stage.join("7zz.exe"))?;
-    // 仓库文件原样拷贝，不生成也不改写。
-    fs::copy(root.join("README.md"), stage.join("README.md"))?;
-    fs::copy(root.join("CHANGELOG.md"), stage.join("CHANGELOG.md"))?;
-    fs::copy(root.join("LICENSE"), licenses.join("ezz-LICENSE.txt"))?;
-    for name in ["License.txt", "copying.txt", "man.txt", "unRarLicense.txt"] {
-        fs::copy(root.join("assets/7zip").join(name), licenses.join(name))?;
-    }
+    copy_docs_and_licenses(&root, &stage, &licenses)?;
 
     let archive = dist.join(format!("{folder_name}.zip"));
     if archive.exists() {
@@ -372,14 +374,22 @@ fn asset_url() -> String {
 
 fn download(url: &str, destination: &Path) -> Result<(), Box<dyn Error>> {
     let partial = destination.with_extension("download");
-    let client = reqwest::blocking::Client::builder()
-        .user_agent("ezz-xtask")
-        .connect_timeout(Duration::from_secs(30))
-        .timeout(Duration::from_secs(300))
-        .build()?;
-    let mut response = client.get(url).send()?.error_for_status()?;
-    let mut file = File::create(&partial)?;
-    io::copy(&mut response, &mut file)?;
+    run_command(
+        Command::new("curl")
+            .args([
+                "-fsSL",
+                "--retry",
+                "3",
+                "--connect-timeout",
+                "30",
+                "--max-time",
+                "300",
+            ])
+            .arg("-o")
+            .arg(&partial)
+            .arg(url),
+        "download 7-Zip",
+    )?;
     fs::rename(partial, destination)?;
     Ok(())
 }

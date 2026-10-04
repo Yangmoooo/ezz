@@ -79,11 +79,7 @@ pub struct PasswordResponse {
 }
 
 pub trait PasswordPrompt {
-    fn request_password(
-        &self,
-        input: &Path,
-        previous_attempt_failed: bool,
-    ) -> Option<PasswordResponse>;
+    fn request_password(&self, previous_attempt_failed: bool) -> Option<PasswordResponse>;
 }
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
@@ -102,7 +98,7 @@ pub enum ExtractionError {
 
     #[error("7-Zip failed to {operation} with exit code {exit_code:?}: {message}")]
     EngineFailed {
-        operation: &'static str,
+        operation: EngineOperation,
         exit_code: Option<i32>,
         message: String,
     },
@@ -140,13 +136,12 @@ impl ExtractionError {
             Self::InputNotFile(_) => "Input is not a file",
             Self::EngineNotFound(_) => "7-Zip executable not found",
             Self::EngineLaunch { .. } => "Could not start 7-Zip",
-            Self::EngineFailed { operation, .. } => match *operation {
-                "extract" => "7-Zip could not extract the archive",
-                "list" => "7-Zip could not read the archive",
-                "test" => "7-Zip could not verify the password",
-                "scan embedded data in" => "7-Zip could not scan the file",
-                "extract embedded archive from" => "7-Zip could not extract the embedded archive",
-                _ => "7-Zip failed",
+            Self::EngineFailed { operation, .. } => match operation {
+                EngineOperation::Extract => "7-Zip could not extract the archive",
+                EngineOperation::List => "7-Zip could not read the archive",
+                EngineOperation::Test => "7-Zip could not verify the password",
+                EngineOperation::ScanEmbedded => "7-Zip could not scan the file",
+                EngineOperation::ExtractEmbedded => "7-Zip could not extract the embedded archive",
             },
             Self::UnsupportedInput(_) => "Not a supported archive",
             Self::MissingVolume(_) => "Archive volume is missing",
@@ -155,6 +150,28 @@ impl ExtractionError {
             Self::FileSystem { .. } => "File system error",
             Self::UnsafeOutput { .. } => "Extraction escaped its workspace",
         }
+    }
+}
+
+/// 引擎调用的种类：通知文案按它区分，新增种类时编译器会要求补齐 `summary`。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EngineOperation {
+    Extract,
+    List,
+    Test,
+    ScanEmbedded,
+    ExtractEmbedded,
+}
+
+impl std::fmt::Display for EngineOperation {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Extract => "extract",
+            Self::List => "list",
+            Self::Test => "test",
+            Self::ScanEmbedded => "scan embedded data in",
+            Self::ExtractEmbedded => "extract embedded archive from",
+        })
     }
 }
 
@@ -229,7 +246,6 @@ impl ExtractionWorkflow {
         let archive_set = resolve_archive_set(&selected_input)?;
         let input = &archive_set.primary;
         let seven_zip = SevenZip::new(&self.seven_zip);
-        let input_format = detect_input_format(&seven_zip, input)?;
 
         let parent = input.parent().ok_or_else(|| ExtractionError::FileSystem {
             operation: "resolve parent of",
@@ -245,13 +261,8 @@ impl ExtractionWorkflow {
             .map_err(|error| file_system_error("create extraction directory", &extracted, error))?;
 
         let prepared = workspace.path().join("prepared");
-        let (archive_input, detected_scan) = input_format.prepare(&seven_zip, input, &prepared)?;
+        let (archive_input, scan) = detect_input_format(&seven_zip, input, &prepared)?;
 
-        // 只有特殊格式才需要补一次扫描（它的前置扫描发生在刚释放出的内嵌归档上）。
-        let scan = match detected_scan {
-            Some(scan) => scan,
-            None => seven_zip.scan(&archive_input, "")?,
-        };
         let mut password =
             self.resolve_password(&seven_zip, &archive_input, &scan, &selected_input)?;
 
@@ -291,7 +302,7 @@ impl ExtractionWorkflow {
         let sources = archive_set.sources;
         let mut warnings = Vec::new();
 
-        let mut sanitized = scan.sanitized.clone();
+        let mut sanitized = scan.sanitized;
         sanitized.extend(verdict.sanitized_links);
         if !discarded.is_empty() || !sanitized.is_empty() {
             warnings.push(ExtractionWarning::UnsafeEntriesSkipped {
@@ -344,7 +355,7 @@ impl ExtractionWorkflow {
         seven_zip: &SevenZip,
         archive_input: &Path,
         scan: &ArchiveScan,
-        prompt_input: &Path,
+        selected_input: &Path,
     ) -> Result<ResolvedPassword, ExtractionError> {
         if !scan.encrypted {
             return Ok(ResolvedPassword::empty());
@@ -363,7 +374,7 @@ impl ExtractionWorkflow {
             }
         }
 
-        self.prompt_for_password(seven_zip, archive_input, scan, prompt_input, false)
+        self.prompt_for_password(seven_zip, archive_input, scan, selected_input, false)
     }
 
     /// 弹窗取密码并校验；`previous_attempt_failed` 控制提示文案。
@@ -372,16 +383,16 @@ impl ExtractionWorkflow {
         seven_zip: &SevenZip,
         archive_input: &Path,
         scan: &ArchiveScan,
-        prompt_input: &Path,
+        selected_input: &Path,
         mut previous_attempt_failed: bool,
     ) -> Result<ResolvedPassword, ExtractionError> {
         loop {
             let Some(response) = self
                 .password_prompt
-                .request_password(prompt_input, previous_attempt_failed)
+                .request_password(previous_attempt_failed)
             else {
                 return Err(ExtractionError::PasswordRequired(
-                    prompt_input.to_path_buf(),
+                    selected_input.to_path_buf(),
                 ));
             };
 
@@ -443,11 +454,7 @@ impl ResolvedPassword {
 struct NoPasswordPrompt;
 
 impl PasswordPrompt for NoPasswordPrompt {
-    fn request_password(
-        &self,
-        _input: &Path,
-        _previous_attempt_failed: bool,
-    ) -> Option<PasswordResponse> {
+    fn request_password(&self, _previous_attempt_failed: bool) -> Option<PasswordResponse> {
         None
     }
 }

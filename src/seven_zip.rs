@@ -2,8 +2,8 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Output;
 
-use crate::workflow::ExtractionError;
 use crate::workflow::safety::{is_safe_relative_path, is_unsafe_archive_path};
+use crate::workflow::{EngineOperation, ExtractionError};
 
 pub(crate) struct SevenZip {
     executable: PathBuf,
@@ -71,7 +71,7 @@ impl SevenZip {
             return Err(ExtractionError::UnsupportedInput(input.to_path_buf()));
         }
         Err(ExtractionError::EngineFailed {
-            operation: "list",
+            operation: EngineOperation::List,
             exit_code: output.status.code(),
             message,
         })
@@ -102,7 +102,7 @@ impl SevenZip {
                 return Ok(None);
             }
             return Err(ExtractionError::EngineFailed {
-                operation: "scan embedded data in",
+                operation: EngineOperation::ScanEmbedded,
                 exit_code: output.status.code(),
                 message,
             });
@@ -131,7 +131,7 @@ impl SevenZip {
 
         if !output.status.success() {
             return Err(ExtractionError::EngineFailed {
-                operation: "extract embedded archive from",
+                operation: EngineOperation::ExtractEmbedded,
                 exit_code: output.status.code(),
                 message: output_message(&output),
             });
@@ -166,7 +166,7 @@ impl SevenZip {
                 Err(ExtractionError::WrongPassword)
             } else {
                 Err(ExtractionError::EngineFailed {
-                    operation: "test",
+                    operation: EngineOperation::Test,
                     exit_code: output.status.code(),
                     message,
                 })
@@ -198,31 +198,20 @@ impl SevenZip {
         })?;
 
         let code = output.status.code();
-        let message = output_message(&output);
         if output.status.success() {
             return Ok(ExtractionVerdict::default());
         }
+        let message = output_message(&output);
         if is_wrong_password(&message) {
             // 混合加密归档：试密码通过后，提取阶段仍可能报密码错。
             return Err(ExtractionError::WrongPassword);
         }
 
-        match classify(code, &message) {
-            Classified::Accepted {
-                engine_warning,
-                sanitized_links,
-                failed_entries,
-            } => Ok(ExtractionVerdict {
-                engine_warning,
-                sanitized_links,
-                failed_entries,
-            }),
-            Classified::Fatal => Err(ExtractionError::EngineFailed {
-                operation: "extract",
-                exit_code: code,
-                message,
-            }),
-        }
+        classify(code, &message).ok_or(ExtractionError::EngineFailed {
+            operation: EngineOperation::Extract,
+            exit_code: code,
+            message,
+        })
     }
 }
 
@@ -253,35 +242,25 @@ pub(crate) struct ExtractionVerdict {
     pub(crate) failed_entries: Vec<String>,
 }
 
-enum Classified {
-    /// 结果有效：退出码 0、退出码 1（Warning），或退出码 2 且所有错误行都是可容忍的逐条目失败。
-    Accepted {
-        engine_warning: Option<String>,
-        sanitized_links: Vec<String>,
-        failed_entries: Vec<String>,
-    },
-    /// 其余非零退出码：致命失败，必须回滚。
-    Fatal,
-}
-
 /// 把一次提取的退出码与引擎消息分成"降级成功"或"致命失败"。
-fn classify(exit_code: Option<i32>, message: &str) -> Classified {
+///
+/// 降级成功是退出码 0、退出码 1（Warning），或退出码 2 且所有错误行都是可容忍的逐条目失败；
+/// 其余非零退出码都是致命失败，必须回滚。
+fn classify(exit_code: Option<i32>, message: &str) -> Option<ExtractionVerdict> {
     match exit_code {
         // 退出码 1（Warning）：结果已提交，但引擎报了警告。
-        Some(1) => Classified::Accepted {
+        Some(1) => Some(ExtractionVerdict {
             engine_warning: Some(message.to_owned()),
-            sanitized_links: Vec::new(),
-            failed_entries: Vec::new(),
-        },
-        Some(2) => match tolerated_exit_two(message) {
-            Some((sanitized_links, failed_entries)) => Classified::Accepted {
-                engine_warning: None,
+            ..ExtractionVerdict::default()
+        }),
+        Some(2) => {
+            tolerated_exit_two(message).map(|(sanitized_links, failed_entries)| ExtractionVerdict {
                 sanitized_links,
                 failed_entries,
-            },
-            None => Classified::Fatal,
-        },
-        _ => Classified::Fatal,
+                ..ExtractionVerdict::default()
+            })
+        }
+        _ => None,
     }
 }
 
@@ -447,7 +426,7 @@ fn output_switch(directory: &Path) -> OsString {
 }
 
 fn is_wrong_password(message: &str) -> bool {
-    message.contains("Wrong password?") || message.contains("Wrong password")
+    message.contains("Wrong password")
 }
 
 fn output_message(output: &Output) -> String {
@@ -465,88 +444,58 @@ mod tests {
 
     #[test]
     fn exit_code_one_is_accepted_with_the_engine_message() {
-        match classify(Some(1), "something to report") {
-            Classified::Accepted {
-                engine_warning,
-                sanitized_links,
-                failed_entries,
-            } => {
-                assert_eq!(engine_warning.as_deref(), Some("something to report"));
-                assert!(sanitized_links.is_empty());
-                assert!(failed_entries.is_empty());
-            }
-            Classified::Fatal => panic!("exit code 1 is a degraded success"),
-        }
+        let verdict = classify(Some(1), "something to report").expect("a degraded success");
+        assert_eq!(
+            verdict.engine_warning.as_deref(),
+            Some("something to report")
+        );
+        assert!(verdict.sanitized_links.is_empty());
+        assert!(verdict.failed_entries.is_empty());
     }
 
     #[test]
     fn exit_code_two_with_only_ignored_links_is_accepted_and_named() {
         let message = "ERROR: Dangerous link path was ignored : escape-link : ..\\outside.txt";
-        match classify(Some(2), message) {
-            Classified::Accepted {
-                engine_warning,
-                sanitized_links,
-                failed_entries,
-            } => {
-                assert!(engine_warning.is_none());
-                assert!(failed_entries.is_empty());
-                assert_eq!(sanitized_links, vec!["escape-link".to_owned()]);
-            }
-            Classified::Fatal => panic!("ignored links are a degraded success"),
-        }
+        let verdict = classify(Some(2), message).expect("a degraded success");
+        assert!(verdict.engine_warning.is_none());
+        assert!(verdict.failed_entries.is_empty());
+        assert_eq!(verdict.sanitized_links, vec!["escape-link".to_owned()]);
     }
 
     #[test]
     fn exit_code_two_with_corrupted_entries_is_accepted_and_named() {
         let message = "ERROR: CRC Failed : bad.txt\nERROR: Data Error : nested/bad2.txt\n";
-        match classify(Some(2), message) {
-            Classified::Accepted {
-                engine_warning,
-                sanitized_links,
-                failed_entries,
-            } => {
-                assert!(engine_warning.is_none());
-                assert!(sanitized_links.is_empty());
-                assert_eq!(
-                    failed_entries,
-                    vec!["bad.txt".to_owned(), "nested/bad2.txt".to_owned()]
-                );
-            }
-            Classified::Fatal => panic!("per-entry data failures are a degraded success"),
-        }
+        let verdict = classify(Some(2), message).expect("a degraded success");
+        assert!(verdict.engine_warning.is_none());
+        assert!(verdict.sanitized_links.is_empty());
+        assert_eq!(
+            verdict.failed_entries,
+            vec!["bad.txt".to_owned(), "nested/bad2.txt".to_owned()]
+        );
     }
 
     #[test]
     fn exit_code_two_with_an_unexpected_error_is_fatal() {
-        assert!(matches!(
-            classify(Some(2), "ERROR: Something else"),
-            Classified::Fatal
-        ));
-        assert!(matches!(
-            classify(Some(2), "ERROR: Headers Error : corrupt.zip"),
-            Classified::Fatal
-        ));
+        assert!(classify(Some(2), "ERROR: Something else").is_none());
+        assert!(classify(Some(2), "ERROR: Headers Error : corrupt.zip").is_none());
         // 混合：一条可容忍 + 一条不可容忍 → 致命。
-        assert!(matches!(
-            classify(Some(2), "ERROR: CRC Failed : a\nERROR: Headers Error : b"),
-            Classified::Fatal
-        ));
+        assert!(classify(Some(2), "ERROR: CRC Failed : a\nERROR: Headers Error : b").is_none());
         // 没有 ERROR 行 / 空消息 → 不降级。
-        assert!(matches!(classify(Some(2), ""), Classified::Fatal));
+        assert!(classify(Some(2), "").is_none());
         // 密码错误绝不走白名单：它的冒号不在前缀之后。
-        assert!(matches!(
+        assert!(
             classify(
                 Some(2),
                 "ERROR: Data Error in encrypted file. Wrong password? : a"
-            ),
-            Classified::Fatal
-        ));
+            )
+            .is_none()
+        );
     }
 
     #[test]
     fn other_exit_codes_are_fatal() {
-        assert!(matches!(classify(Some(7), "whatever"), Classified::Fatal));
-        assert!(matches!(classify(None, "whatever"), Classified::Fatal));
+        assert!(classify(Some(7), "whatever").is_none());
+        assert!(classify(None, "whatever").is_none());
     }
 
     #[test]
