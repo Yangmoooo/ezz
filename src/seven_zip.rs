@@ -15,6 +15,24 @@ impl SevenZip {
         }
     }
 
+    /// 唯一的引擎调用出口（R1/R6）：构造子进程、执行、把启动失败归一成 `EngineLaunch`。
+    ///
+    /// `crate::process::command` 是全程序唯一的子进程构造点（`CREATE_NO_WINDOW` 在它内部，
+    /// §11.1），所以这里同时是“不弹控制台窗口”的唯一落点。调用方只负责拼参数。
+    fn execute(
+        &self,
+        configure: impl FnOnce(&mut std::process::Command),
+    ) -> Result<Output, ExtractionError> {
+        let mut command = crate::process::command(&self.executable);
+        configure(&mut command);
+        command
+            .output()
+            .map_err(|error| ExtractionError::EngineLaunch {
+                path: self.executable.clone(),
+                message: error.to_string(),
+            })
+    }
+
     /// 前置扫描：一次 `l -slt -ba` 同时完成三件事 —— 校验条目路径（§5.4）、判定是否
     /// 需要密码、挑出用于最小化校验的条目（R4/D2）。
     ///
@@ -25,19 +43,14 @@ impl SevenZip {
         input: &Path,
         password: &str,
     ) -> Result<ArchiveScan, ExtractionError> {
-        let mut command = crate::process::command(&self.executable);
-        command
-            .arg("l")
-            .args(["-slt", "-ba"])
-            .arg(password_switch(password))
-            .args(["-bsp0", "-sccUTF-8", "-scsUTF-8"])
-            .arg(input);
-        let output = command
-            .output()
-            .map_err(|error| ExtractionError::EngineLaunch {
-                path: self.executable.clone(),
-                message: error.to_string(),
-            })?;
+        let output = self.execute(|command| {
+            command
+                .arg("l")
+                .args(["-slt", "-ba"])
+                .arg(password_switch(password))
+                .args(["-bsp0", "-sccUTF-8", "-scsUTF-8"])
+                .arg(input);
+        })?;
 
         if output.status.success() {
             let listing = String::from_utf8_lossy(&output.stdout);
@@ -70,25 +83,20 @@ impl SevenZip {
         &self,
         input: &Path,
     ) -> Result<Option<PathBuf>, ExtractionError> {
-        let mut command = crate::process::command(&self.executable);
-        command
-            .arg("l")
-            .args([
-                "-t#",
-                "-slt",
-                "-ba",
-                "-p",
-                "-bsp0",
-                "-sccUTF-8",
-                "-scsUTF-8",
-            ])
-            .arg(input);
-        let output = command
-            .output()
-            .map_err(|error| ExtractionError::EngineLaunch {
-                path: self.executable.clone(),
-                message: error.to_string(),
-            })?;
+        let output = self.execute(|command| {
+            command
+                .arg("l")
+                .args([
+                    "-t#",
+                    "-slt",
+                    "-ba",
+                    "-p",
+                    "-bsp0",
+                    "-sccUTF-8",
+                    "-scsUTF-8",
+                ])
+                .arg(input);
+        })?;
 
         if !output.status.success() {
             let message = output_message(&output);
@@ -113,22 +121,15 @@ impl SevenZip {
         output_dir: &Path,
         embedded: &Path,
     ) -> Result<PathBuf, ExtractionError> {
-        let mut output_switch = OsString::from("-o");
-        output_switch.push(output_dir);
-        let mut command = crate::process::command(&self.executable);
-        command
-            .arg("x")
-            .arg("-t#")
-            .arg(output_switch)
-            .args(["-y", "-aoa", "-bso0", "-bsp0", "-sccUTF-8", "-scsUTF-8"])
-            .arg(input)
-            .arg(embedded);
-        let output = command
-            .output()
-            .map_err(|error| ExtractionError::EngineLaunch {
-                path: self.executable.clone(),
-                message: error.to_string(),
-            })?;
+        let output = self.execute(|command| {
+            command
+                .arg("x")
+                .arg("-t#")
+                .arg(output_switch(output_dir))
+                .args(["-y", "-aoa", "-bso0", "-bsp0", "-sccUTF-8", "-scsUTF-8"])
+                .arg(input)
+                .arg(embedded);
+        })?;
 
         if !output.status.success() {
             return Err(ExtractionError::EngineFailed {
@@ -148,21 +149,16 @@ impl SevenZip {
         password: &str,
         entry: Option<&str>,
     ) -> Result<(), ExtractionError> {
-        let mut command = crate::process::command(&self.executable);
-        command
-            .arg("t")
-            .arg(password_switch(password))
-            .args(["-bso0", "-bsp0", "-sccUTF-8", "-scsUTF-8"])
-            .arg(input);
-        if let Some(entry) = entry {
-            command.arg(entry);
-        }
-        let output = command
-            .output()
-            .map_err(|error| ExtractionError::EngineLaunch {
-                path: self.executable.clone(),
-                message: error.to_string(),
-            })?;
+        let output = self.execute(|command| {
+            command
+                .arg("t")
+                .arg(password_switch(password))
+                .args(["-bso0", "-bsp0", "-sccUTF-8", "-scsUTF-8"])
+                .arg(input);
+            if let Some(entry) = entry {
+                command.arg(entry);
+            }
+        })?;
 
         if output.status.success() {
             Ok(())
@@ -186,29 +182,22 @@ impl SevenZip {
         output_dir: &Path,
         password: &str,
     ) -> Result<ExtractionVerdict, ExtractionError> {
-        let mut output_switch = OsString::from("-o");
-        output_switch.push(output_dir);
-        let mut command = crate::process::command(&self.executable);
-        command
-            .arg("x")
-            .arg(output_switch)
-            .arg(password_switch(password))
-            .args([
-                "-y",
-                "-aoa",
-                "-spe",
-                "-bso0",
-                "-bsp0",
-                "-sccUTF-8",
-                "-scsUTF-8",
-            ])
-            .arg(input);
-        let output = command
-            .output()
-            .map_err(|error| ExtractionError::EngineLaunch {
-                path: self.executable.clone(),
-                message: error.to_string(),
-            })?;
+        let output = self.execute(|command| {
+            command
+                .arg("x")
+                .arg(output_switch(output_dir))
+                .arg(password_switch(password))
+                .args([
+                    "-y",
+                    "-aoa",
+                    "-spe",
+                    "-bso0",
+                    "-bsp0",
+                    "-sccUTF-8",
+                    "-scsUTF-8",
+                ])
+                .arg(input);
+        })?;
 
         let code = output.status.code();
         let message = output_message(&output);
@@ -262,8 +251,8 @@ pub(crate) struct ExtractionVerdict {
     pub(crate) sanitized_links: Vec<String>,
     /// 引擎报告数据损坏（`CRC Failed` / `Data Error`）的条目。
     ///
-    /// 实测：7-Zip 仍会把（损坏的）内容写进输出，所以调用方必须自己删除它们，
-    /// 否则会把坏数据当作成果交付。
+    /// 实测：7-Zip 仍会把（损坏的）内容写进输出。层 1 透传（§5.5）：ezz 不修改引擎写出的
+    /// 内容，只把这份清单交给调用方报告。
     pub(crate) failed_entries: Vec<String>,
 }
 
@@ -467,6 +456,13 @@ fn is_unsafe_archive_path(path: &str) -> bool {
 fn password_switch(password: &str) -> OsString {
     let mut switch = OsString::from("-p");
     switch.push(password);
+    switch
+}
+
+/// `-o<目录>`：解压目标目录。
+fn output_switch(directory: &Path) -> OsString {
+    let mut switch = OsString::from("-o");
+    switch.push(directory);
     switch
 }
 

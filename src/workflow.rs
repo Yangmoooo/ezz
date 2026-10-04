@@ -50,7 +50,7 @@ pub enum ExtractionWarning {
     EmptyAfterMetadataRemoval {
         removed: Vec<String>,
     },
-    /// 引擎报告数据损坏的条目：它们的内容已从结果中删除（§5.1）。
+    /// 引擎报告数据损坏的条目：**只报告，不修改**——7-Zip 写出的内容照旧提交（§5.5 层 1）。
     FailedEntries {
         entries: Vec<String>,
     },
@@ -122,6 +122,16 @@ pub struct ExtractionWorkflow {
     password_store: Option<PasswordStore>,
 }
 
+/// `ExtractionWorkflow::from_parts` 的装配参数：`None` 表示使用生产默认值。
+#[cfg(test)]
+#[derive(Default)]
+struct WorkflowParts {
+    seven_zip: PathBuf,
+    source_cleaner: Option<Box<dyn SourceCleaner>>,
+    password_prompt: Option<Box<dyn PasswordPrompt>>,
+    password_store: Option<PathBuf>,
+}
+
 impl ExtractionWorkflow {
     pub fn new(seven_zip: impl Into<PathBuf>) -> Self {
         Self {
@@ -145,45 +155,21 @@ impl ExtractionWorkflow {
         }
     }
 
+    /// 测试装配点：任意组合三个協作者，未给出的项用生产默认值。
+    ///
+    /// 生产代码只有 `new`（不支持密码）和 `with_password_support` 两个构造函数；测试需要
+    /// 替换協作者才能观察行为，但那些组合不该长在结构体的接口上（§9）。
     #[cfg(test)]
-    fn with_source_cleaner(
-        seven_zip: impl Into<PathBuf>,
-        source_cleaner: impl SourceCleaner + 'static,
-    ) -> Self {
+    fn from_parts(parts: WorkflowParts) -> Self {
         Self {
-            seven_zip: seven_zip.into(),
-            source_cleaner: Box::new(source_cleaner),
-            password_prompt: Box::new(NoPasswordPrompt),
-            password_store: None,
-        }
-    }
-
-    #[cfg(test)]
-    fn with_adapters(
-        seven_zip: impl Into<PathBuf>,
-        source_cleaner: impl SourceCleaner + 'static,
-        password_prompt: impl PasswordPrompt + 'static,
-    ) -> Self {
-        Self {
-            seven_zip: seven_zip.into(),
-            source_cleaner: Box::new(source_cleaner),
-            password_prompt: Box::new(password_prompt),
-            password_store: None,
-        }
-    }
-
-    #[cfg(test)]
-    fn with_adapters_and_password_store(
-        seven_zip: impl Into<PathBuf>,
-        source_cleaner: impl SourceCleaner + 'static,
-        password_prompt: impl PasswordPrompt + 'static,
-        password_store: impl Into<PathBuf>,
-    ) -> Self {
-        Self {
-            seven_zip: seven_zip.into(),
-            source_cleaner: Box::new(source_cleaner),
-            password_prompt: Box::new(password_prompt),
-            password_store: Some(PasswordStore::new(password_store)),
+            seven_zip: parts.seven_zip,
+            source_cleaner: parts
+                .source_cleaner
+                .unwrap_or_else(|| Box::new(TrashCleaner)),
+            password_prompt: parts
+                .password_prompt
+                .unwrap_or_else(|| Box::new(NoPasswordPrompt)),
+            password_store: parts.password_store.map(PasswordStore::new),
         }
     }
 
@@ -440,71 +426,102 @@ impl DetectedInputFormat {
     }
 }
 
-trait InputFormatHandler {
-    fn detect(
-        &self,
-        seven_zip: &SevenZip,
-        input: &Path,
-    ) -> Result<Option<DetectedInputFormat>, ExtractionError>;
-}
-
-struct SteganographierHandler;
-
-impl InputFormatHandler for SteganographierHandler {
-    fn detect(
-        &self,
-        seven_zip: &SevenZip,
-        input: &Path,
-    ) -> Result<Option<DetectedInputFormat>, ExtractionError> {
-        let is_video = input
-            .extension()
-            .and_then(OsStr::to_str)
-            .is_some_and(|extension| {
-                extension.eq_ignore_ascii_case("mp4") || extension.eq_ignore_ascii_case("mkv")
-            });
-        if !is_video {
-            return Ok(None);
-        }
-
-        seven_zip.embedded_archive(input).map(|embedded| {
-            embedded.map(|embedded| DetectedInputFormat::Steganographier { embedded })
-        })
-    }
-}
-
-struct RegularArchiveHandler;
-
-impl InputFormatHandler for RegularArchiveHandler {
-    fn detect(
-        &self,
-        seven_zip: &SevenZip,
-        input: &Path,
-    ) -> Result<Option<DetectedInputFormat>, ExtractionError> {
-        match seven_zip.scan(input, "") {
-            Ok(scan) => Ok(Some(DetectedInputFormat::RegularArchive { scan })),
-            Err(ExtractionError::UnsupportedInput(_)) => Ok(None),
-            Err(error) => Err(error),
-        }
-    }
-}
-
+/// 探测输入格式：先试 Steganographier（`-t#`），再按普通归档扫描（设计 §6.2）。
+///
+/// 两个探测函数就是全部格式集合：`SevenZip` 只有一个实现，不为假设中的第三种格式保留一个
+/// trait（设计 §9：不得为假设中的扩展扩大接口）。
 fn detect_input_format(
     seven_zip: &SevenZip,
     input: &Path,
 ) -> Result<DetectedInputFormat, ExtractionError> {
-    let handlers: [&dyn InputFormatHandler; 2] = [&SteganographierHandler, &RegularArchiveHandler];
-    for handler in handlers {
-        if let Some(format) = handler.detect(seven_zip, input)? {
-            return Ok(format);
-        }
+    if let Some(format) = detect_steganographier(seven_zip, input)? {
+        return Ok(format);
     }
+    if let Some(format) = detect_regular_archive(seven_zip, input)? {
+        return Ok(format);
+    }
+
     Err(ExtractionError::UnsupportedInput(input.to_path_buf()))
+}
+
+/// 视频文件里内嵌的归档（`-t#`）。不是视频、或找不到受支持的内嵌归档时返回 `None`。
+fn detect_steganographier(
+    seven_zip: &SevenZip,
+    input: &Path,
+) -> Result<Option<DetectedInputFormat>, ExtractionError> {
+    let is_video = input
+        .extension()
+        .and_then(OsStr::to_str)
+        .is_some_and(|extension| {
+            extension.eq_ignore_ascii_case("mp4") || extension.eq_ignore_ascii_case("mkv")
+        });
+    if !is_video {
+        return Ok(None);
+    }
+
+    seven_zip
+        .embedded_archive(input)
+        .map(|embedded| embedded.map(|embedded| DetectedInputFormat::Steganographier { embedded }))
+}
+
+/// 普通归档：一次无密码扫描同时决定“这是不是归档”和“要不要密码”（R4）。
+fn detect_regular_archive(
+    seven_zip: &SevenZip,
+    input: &Path,
+) -> Result<Option<DetectedInputFormat>, ExtractionError> {
+    match seven_zip.scan(input, "") {
+        Ok(scan) => Ok(Some(DetectedInputFormat::RegularArchive { scan })),
+        Err(ExtractionError::UnsupportedInput(_)) => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 struct ArchiveSet {
     primary: PathBuf,
     sources: Vec<PathBuf>,
     output_stem: OsString,
+}
+
+/// 同一逻辑归档的卷：序号 → 路径（按键有序，缺号检查依赖这一点）。
+type VolumeSet = BTreeMap<u32, PathBuf>;
+
+/// 扫一遍归档所在目录，按 `sequence_of` 挑出属于同一个逻辑归档的卷（设计 §6.3）。
+///
+/// `sequence_of` 返回序号即收录该文件，返回 `None` 表示与本次输入无关。三个分卷家族
+/// （`.001`、`.partN.rar`、`.z01`+`.zip`）只在这个闭包里不同。
+fn scan_volumes(
+    parent: &Path,
+    mut sequence_of: impl FnMut(&Path) -> Option<u32>,
+) -> Result<VolumeSet, ExtractionError> {
+    let mut volumes = VolumeSet::new();
+    let entries = fs::read_dir(parent)
+        .map_err(|error| file_system_error("scan archive volumes in", parent, error))?;
+    for entry in entries {
+        let entry =
+            entry.map_err(|error| file_system_error("scan archive volume in", parent, error))?;
+        let path = entry.path();
+        if let Some(sequence) = sequence_of(&path) {
+            volumes.insert(sequence, path);
+        }
+    }
+    Ok(volumes)
+}
+
+/// 1 到最高序号之间不得缺号：缺号是致命失败（`MissingVolume`）。
+///
+/// `selected` 是用户实际点中的那一卷：目录里只剩它自己时，缺号检查也必须以它为最高序号。
+fn require_contiguous(
+    volumes: &VolumeSet,
+    selected: u32,
+    missing: impl Fn(u32) -> PathBuf,
+) -> Result<(), ExtractionError> {
+    let last = volumes.keys().next_back().copied().unwrap_or(selected);
+    for number in 1..=last {
+        if !volumes.contains_key(&number) {
+            return Err(ExtractionError::MissingVolume(missing(number)));
+        }
+    }
+    Ok(())
 }
 
 fn resolve_archive_set(selected: &Path) -> Result<ArchiveSet, ExtractionError> {
@@ -539,28 +556,16 @@ fn resolve_numeric_archive_set(
 
     let parent = selected.parent().expect("absolute input parent");
     let prefix = selected.file_stem().expect("volume file stem");
-    let mut volumes = BTreeMap::new();
-    let entries = fs::read_dir(parent)
-        .map_err(|error| file_system_error("scan archive volumes in", parent, error))?;
-    for entry in entries {
-        let entry =
-            entry.map_err(|error| file_system_error("scan archive volume in", parent, error))?;
-        let path = entry.path();
-        if path.file_stem() == Some(prefix)
-            && let Some(number) = numeric_extension(&path)
-        {
-            volumes.insert(number, path);
+    let volumes = scan_volumes(parent, |path| {
+        if path.file_stem() == Some(prefix) {
+            numeric_extension(path)
+        } else {
+            None
         }
-    }
-
-    let last = volumes.keys().next_back().copied().unwrap_or(sequence);
-    for number in 1..=last {
-        if !volumes.contains_key(&number) {
-            return Err(ExtractionError::MissingVolume(
-                selected.with_extension(format!("{number:03}")),
-            ));
-        }
-    }
+    })?;
+    require_contiguous(&volumes, sequence, |number| {
+        selected.with_extension(format!("{number:03}"))
+    })?;
 
     Ok(ArchiveSet {
         primary: first,
@@ -581,37 +586,19 @@ fn resolve_rar_archive_set(
     selected_volume: &RarVolumeName,
 ) -> Result<ArchiveSet, ExtractionError> {
     let parent = selected.parent().expect("absolute input parent");
-    let mut volumes = BTreeMap::new();
-    let entries = fs::read_dir(parent)
-        .map_err(|error| file_system_error("scan archive volumes in", parent, error))?;
-    for entry in entries {
-        let entry =
-            entry.map_err(|error| file_system_error("scan archive volume in", parent, error))?;
-        let path = entry.path();
-        if let Some(volume) = rar_volume_name(&path)
-            && volume.prefix == selected_volume.prefix
-            && volume
-                .extension
-                .eq_ignore_ascii_case(&selected_volume.extension)
-        {
-            volumes.insert(volume.sequence, path);
-        }
-    }
-
-    let last = volumes
-        .keys()
-        .next_back()
-        .copied()
-        .unwrap_or(selected_volume.sequence);
-    for number in 1..=last {
-        if !volumes.contains_key(&number) {
-            return Err(ExtractionError::MissingVolume(rar_volume_path(
-                parent,
-                selected_volume,
-                number,
-            )));
-        }
-    }
+    let volumes = scan_volumes(parent, |path| {
+        rar_volume_name(path)
+            .filter(|volume| {
+                volume.prefix == selected_volume.prefix
+                    && volume
+                        .extension
+                        .eq_ignore_ascii_case(&selected_volume.extension)
+            })
+            .map(|volume| volume.sequence)
+    })?;
+    require_contiguous(&volumes, selected_volume.sequence, |number| {
+        rar_volume_path(parent, selected_volume, number)
+    })?;
 
     Ok(ArchiveSet {
         primary: volumes.get(&1).expect("first RAR volume checked").clone(),
@@ -658,24 +645,22 @@ fn resolve_zip_archive_set(
 ) -> Result<ArchiveSet, ExtractionError> {
     let parent = selected.parent().expect("absolute input parent");
     let stem = selected.file_stem().expect("volume file stem");
-    let mut volumes = BTreeMap::new();
+    // 编号卷（`.z01`…）与末尾的无编号 `.zip` 是两类：后者不带序号，单独收集。
     let mut final_volume = None;
-    let entries = fs::read_dir(parent)
-        .map_err(|error| file_system_error("scan archive volumes in", parent, error))?;
-    for entry in entries {
-        let entry =
-            entry.map_err(|error| file_system_error("scan archive volume in", parent, error))?;
-        let path = entry.path();
+    let volumes = scan_volumes(parent, |path| {
         if path.file_stem() != Some(stem) {
-            continue;
+            return None;
         }
-        if let Some(sequence) = zip_volume_sequence(&path) {
-            volumes.insert(sequence, path);
-        } else if has_zip_extension(&path) {
-            final_volume = Some(path);
+        if let Some(sequence) = zip_volume_sequence(path) {
+            return Some(sequence);
         }
-    }
+        if has_zip_extension(path) {
+            final_volume = Some(path.to_path_buf());
+        }
+        None
+    })?;
 
+    // 单个 `.zip`：目录里没有编号卷，选中的就是它自己。
     if selected_sequence.is_none() && volumes.is_empty() {
         return Ok(ArchiveSet {
             primary: selected.to_path_buf(),
@@ -689,19 +674,9 @@ fn resolve_zip_archive_set(
             selected.with_extension("zip"),
         ));
     };
-    let last = volumes
-        .keys()
-        .next_back()
-        .copied()
-        .or(selected_sequence)
-        .unwrap_or(0);
-    for number in 1..=last {
-        if !volumes.contains_key(&number) {
-            return Err(ExtractionError::MissingVolume(
-                selected.with_extension(format!("z{number:02}")),
-            ));
-        }
-    }
+    require_contiguous(&volumes, selected_sequence.unwrap_or(0), |number| {
+        selected.with_extension(format!("z{number:02}"))
+    })?;
 
     let mut sources: Vec<_> = volumes.into_values().collect();
     sources.push(final_volume.clone());
@@ -1152,6 +1127,52 @@ mod tests {
         }
     }
 
+    /// 大多数用例只需要替换清理器：`RemoveSource` 直接删文件（不发回收站），也不弹密码。
+    fn workflow(seven_zip: impl Into<PathBuf>) -> ExtractionWorkflow {
+        workflow_with_cleaner(seven_zip, RemoveSource)
+    }
+
+    /// 替换清理器（例如让它失败，观察 `SourceCleanupFailed` 警告）。
+    fn workflow_with_cleaner(
+        seven_zip: impl Into<PathBuf>,
+        source_cleaner: impl SourceCleaner + 'static,
+    ) -> ExtractionWorkflow {
+        ExtractionWorkflow::from_parts(WorkflowParts {
+            seven_zip: seven_zip.into(),
+            source_cleaner: Some(Box::new(source_cleaner)),
+            ..WorkflowParts::default()
+        })
+    }
+
+    /// 额外替换密码弹窗。
+    fn workflow_with(
+        seven_zip: impl Into<PathBuf>,
+        source_cleaner: impl SourceCleaner + 'static,
+        password_prompt: impl PasswordPrompt + 'static,
+    ) -> ExtractionWorkflow {
+        ExtractionWorkflow::from_parts(WorkflowParts {
+            seven_zip: seven_zip.into(),
+            source_cleaner: Some(Box::new(source_cleaner)),
+            password_prompt: Some(Box::new(password_prompt)),
+            ..WorkflowParts::default()
+        })
+    }
+
+    /// 额外接上密码库。
+    fn workflow_with_store(
+        seven_zip: impl Into<PathBuf>,
+        source_cleaner: impl SourceCleaner + 'static,
+        password_prompt: impl PasswordPrompt + 'static,
+        password_store: impl Into<PathBuf>,
+    ) -> ExtractionWorkflow {
+        ExtractionWorkflow::from_parts(WorkflowParts {
+            seven_zip: seven_zip.into(),
+            source_cleaner: Some(Box::new(source_cleaner)),
+            password_prompt: Some(Box::new(password_prompt)),
+            password_store: Some(password_store.into()),
+        })
+    }
+
     #[test]
     #[ignore = "requires cargo xtask prepare"]
     fn real_archive_extracts_and_commits_its_single_top_level_file() {
@@ -1169,7 +1190,7 @@ mod tests {
         create_archive(&seven_zip, sandbox.path(), &archive, &["payload.txt"]);
         std::fs::remove_file(&payload).expect("remove source payload");
 
-        let outcome = ExtractionWorkflow::with_source_cleaner(&seven_zip, RemoveSource)
+        let outcome = workflow(&seven_zip)
             .extract(&archive)
             .expect("extract archive");
 
@@ -1207,7 +1228,7 @@ mod tests {
         create_archive(&seven_zip, sandbox.path(), &archive, &["payload.txt"]);
         std::fs::remove_file(&payload).expect("remove source payload");
 
-        let outcome = ExtractionWorkflow::with_source_cleaner(&seven_zip, FailingSourceCleaner)
+        let outcome = workflow_with_cleaner(&seven_zip, FailingSourceCleaner)
             .extract(&archive)
             .expect("cleanup failure must not fail extraction");
 
@@ -1254,8 +1275,7 @@ mod tests {
             .set_len(length / 2)
             .expect("truncate test archive");
 
-        let result =
-            ExtractionWorkflow::with_source_cleaner(&seven_zip, RemoveSource).extract(&archive);
+        let result = workflow(&seven_zip).extract(&archive);
 
         assert!(result.is_err(), "damaged archive must fail");
         assert!(archive.is_file(), "damaged archive must be preserved");
@@ -1298,7 +1318,7 @@ mod tests {
         std::fs::remove_file(&first).expect("remove first source payload");
         std::fs::remove_file(&second).expect("remove second source payload");
 
-        let outcome = ExtractionWorkflow::with_source_cleaner(&seven_zip, RemoveSource)
+        let outcome = workflow(&seven_zip)
             .extract(&archive)
             .expect("extract archive");
 
@@ -1324,7 +1344,7 @@ mod tests {
         create_archive(&seven_zip, sandbox.path(), &archive, &["payload.txt"]);
         std::fs::write(&payload, b"existing content").expect("replace existing payload");
 
-        let outcome = ExtractionWorkflow::with_source_cleaner(&seven_zip, RemoveSource)
+        let outcome = workflow(&seven_zip)
             .extract(&archive)
             .expect("extract archive without overwriting");
 
@@ -1361,7 +1381,7 @@ mod tests {
         std::fs::create_dir(&existing).expect("create existing directory");
         std::fs::write(existing.join("marker.txt"), b"existing").expect("create marker");
 
-        let outcome = ExtractionWorkflow::with_source_cleaner(&seven_zip, RemoveSource)
+        let outcome = workflow(&seven_zip)
             .extract(&archive)
             .expect("extract archive without merging directories");
 
@@ -1409,7 +1429,7 @@ mod tests {
         std::fs::remove_file(&ds_store).expect("remove source DS_Store");
         std::fs::remove_dir_all(&metadata).expect("remove source metadata directory");
 
-        let outcome = ExtractionWorkflow::with_source_cleaner(&seven_zip, RemoveSource)
+        let outcome = workflow(&seven_zip)
             .extract(&archive)
             .expect("extract archive");
 
@@ -1439,7 +1459,7 @@ mod tests {
         std::fs::remove_file(&link).expect("remove source symlink");
 
         // 设计 §5.4 / D1：不安全条目不得否决整个输入。
-        let outcome = ExtractionWorkflow::with_source_cleaner(&seven_zip, RemoveSource)
+        let outcome = workflow(&seven_zip)
             .extract(&archive)
             .expect("an escaping link must not fail the whole input");
 
@@ -1511,7 +1531,7 @@ mod tests {
         writer.finish().expect("finish unsafe ZIP");
 
         // 设计 §5.4 / D1：路径需要消毒的条目保留（数据不得丢失），但必须报告。
-        let outcome = ExtractionWorkflow::with_source_cleaner(&seven_zip, RemoveSource)
+        let outcome = workflow(&seven_zip)
             .extract(&archive)
             .expect("a sanitized path must not fail the whole input");
 
@@ -1566,7 +1586,7 @@ mod tests {
             keep_original: true,
         }]);
 
-        let outcome = ExtractionWorkflow::with_adapters(&seven_zip, FailingSourceCleaner, prompt)
+        let outcome = workflow_with(&seven_zip, FailingSourceCleaner, prompt)
             .extract(&archive)
             .expect("extract encrypted archive");
 
@@ -1602,7 +1622,7 @@ mod tests {
             keep_original: false,
         }]);
 
-        let outcome = ExtractionWorkflow::with_adapters(&seven_zip, RemoveSource, prompt)
+        let outcome = workflow_with(&seven_zip, RemoveSource, prompt)
             .extract(&archive)
             .expect("extract content-encrypted archive");
 
@@ -1648,7 +1668,7 @@ mod tests {
             },
         ]);
 
-        ExtractionWorkflow::with_adapters(&seven_zip, RemoveSource, prompt)
+        workflow_with(&seven_zip, RemoveSource, prompt)
             .extract(&archive)
             .expect("retry with the correct password");
 
@@ -1678,8 +1698,7 @@ mod tests {
         );
         std::fs::remove_file(&payload).expect("remove source payload");
 
-        let result = ExtractionWorkflow::with_adapters(&seven_zip, RemoveSource, NoResponsePrompt)
-            .extract(&archive);
+        let result = workflow_with(&seven_zip, RemoveSource, NoResponsePrompt).extract(&archive);
 
         assert_eq!(
             result,
@@ -1720,14 +1739,9 @@ mod tests {
             remember: true,
             keep_original: false,
         }]);
-        ExtractionWorkflow::with_adapters_and_password_store(
-            &seven_zip,
-            RemoveSource,
-            first_prompt,
-            &password_store,
-        )
-        .extract(&first_archive)
-        .expect("extract and remember first password");
+        workflow_with_store(&seven_zip, RemoveSource, first_prompt, &password_store)
+            .extract(&first_archive)
+            .expect("extract and remember first password");
 
         let second_payload = sandbox.path().join("second-secret.txt");
         let second_archive = sandbox.path().join("second.7z");
@@ -1741,14 +1755,9 @@ mod tests {
         );
         std::fs::remove_file(&second_payload).expect("remove second source payload");
 
-        ExtractionWorkflow::with_adapters_and_password_store(
-            &seven_zip,
-            RemoveSource,
-            NoResponsePrompt,
-            &password_store,
-        )
-        .extract(&second_archive)
-        .expect("reuse remembered password without a prompt");
+        workflow_with_store(&seven_zip, RemoveSource, NoResponsePrompt, &password_store)
+            .extract(&second_archive)
+            .expect("reuse remembered password without a prompt");
 
         assert_eq!(std::fs::read(&first_payload).unwrap(), b"first secret");
         assert_eq!(std::fs::read(&second_payload).unwrap(), b"second secret");
@@ -1779,7 +1788,7 @@ mod tests {
             "fixture must contain a second volume"
         );
 
-        let outcome = ExtractionWorkflow::with_source_cleaner(&seven_zip, RemoveSource)
+        let outcome = workflow(&seven_zip)
             .extract(&second_volume)
             .expect("extract from a non-first numeric volume");
 
@@ -1821,7 +1830,7 @@ mod tests {
         std::fs::remove_file(&second_payload).expect("remove second source payload");
         let selected = sandbox.path().join("bundle.7z.002");
 
-        let outcome = ExtractionWorkflow::with_source_cleaner(&seven_zip, RemoveSource)
+        let outcome = workflow(&seven_zip)
             .extract(&selected)
             .expect("extract multiple files from a non-first volume");
 
@@ -1859,7 +1868,7 @@ mod tests {
         std::fs::write(&video, carrier).expect("create Steganographier MP4");
         std::fs::remove_file(&embedded).expect("remove standalone embedded ZIP");
 
-        let outcome = ExtractionWorkflow::with_source_cleaner(&seven_zip, RemoveSource)
+        let outcome = workflow(&seven_zip)
             .extract(&video)
             .expect("extract Steganographier MP4");
 
@@ -1884,8 +1893,7 @@ mod tests {
         let video = sandbox.path().join("ordinary.mp4");
         std::fs::write(&video, minimal_mp4()).expect("create ordinary MP4");
 
-        let result =
-            ExtractionWorkflow::with_source_cleaner(&seven_zip, RemoveSource).extract(&video);
+        let result = workflow(&seven_zip).extract(&video);
 
         assert_eq!(
             result,
@@ -1915,7 +1923,7 @@ mod tests {
         create_zip_archive(&seven_zip, sandbox.path(), &archive, "renamed.txt");
         std::fs::remove_file(&payload).expect("remove source payload");
 
-        let outcome = ExtractionWorkflow::with_source_cleaner(&seven_zip, RemoveSource)
+        let outcome = workflow(&seven_zip)
             .extract(&archive)
             .expect("extract renamed ZIP");
 
@@ -1951,7 +1959,7 @@ mod tests {
             );
             std::fs::remove_file(&payload).expect("remove source payload");
 
-            let outcome = ExtractionWorkflow::with_source_cleaner(&seven_zip, RemoveSource)
+            let outcome = workflow(&seven_zip)
                 .extract(&archive)
                 .expect("extract archive format");
 
@@ -1991,7 +1999,7 @@ mod tests {
         std::fs::write(&video, carrier).expect("create Steganographier MKV");
         std::fs::remove_file(&embedded).expect("remove standalone embedded ZIP");
 
-        let outcome = ExtractionWorkflow::with_source_cleaner(&seven_zip, RemoveSource)
+        let outcome = workflow(&seven_zip)
             .extract(&video)
             .expect("extract Steganographier MKV");
 
@@ -2022,7 +2030,7 @@ mod tests {
             volumes.push(destination);
         }
 
-        let outcome = ExtractionWorkflow::with_source_cleaner(&seven_zip, RemoveSource)
+        let outcome = workflow(&seven_zip)
             .extract(&volumes[1])
             .expect("extract from second RAR volume");
 
@@ -2054,7 +2062,7 @@ mod tests {
         std::fs::copy(fixture("zip-multivolume.zip"), &final_volume)
             .expect("copy final ZIP volume fixture");
 
-        let outcome = ExtractionWorkflow::with_source_cleaner(&seven_zip, RemoveSource)
+        let outcome = workflow(&seven_zip)
             .extract(&first)
             .expect("extract from first ZIP split volume");
 
@@ -2094,7 +2102,7 @@ mod tests {
         writer.write_all(b"payload\n").expect("write entry");
         writer.finish().expect("finish ZIP");
 
-        let outcome = ExtractionWorkflow::with_source_cleaner(&seven_zip, RemoveSource)
+        let outcome = workflow(&seven_zip)
             .extract(&archive)
             .expect("symbolic links must not fail the whole input");
 
@@ -2169,7 +2177,7 @@ mod tests {
         writer.write_all(b"ds\n").expect("write entry");
         writer.finish().expect("finish ZIP");
 
-        let outcome = ExtractionWorkflow::with_source_cleaner(&seven_zip, RemoveSource)
+        let outcome = workflow(&seven_zip)
             .extract(&archive)
             .expect("an archive with only platform metadata must not fail");
 
@@ -2347,7 +2355,7 @@ mod tests {
             &[("C:\\drive.txt", b"drive payload"), ("keep.txt", b"keep")],
         );
 
-        let outcome = ExtractionWorkflow::with_source_cleaner(&seven_zip, RemoveSource)
+        let outcome = workflow(&seven_zip)
             .extract(&archive)
             .expect("a drive-prefixed entry must not fail the whole input");
 
@@ -2400,7 +2408,7 @@ mod tests {
         }
         writer.finish().expect("finish ZIP");
 
-        let outcome = ExtractionWorkflow::with_source_cleaner(&seven_zip, RemoveSource)
+        let outcome = workflow(&seven_zip)
             .extract(&archive)
             .expect("an absolute entry path must not fail the whole input");
 
@@ -2476,7 +2484,7 @@ mod tests {
         corrupt_last_entry_byte(&mut bytes);
         std::fs::write(&archive, &bytes).expect("write corrupted ZIP");
 
-        let outcome = ExtractionWorkflow::with_source_cleaner(&seven_zip, RemoveSource)
+        let outcome = workflow(&seven_zip)
             .extract(&archive)
             .expect("a corrupted entry must not fail the whole input");
 
@@ -2525,7 +2533,7 @@ mod tests {
         let archive = sandbox.path().join("unicode.zip");
         create_archive(&seven_zip, &source, &archive, &[name]);
 
-        let workflow = ExtractionWorkflow::with_source_cleaner(&seven_zip, RemoveSource);
+        let workflow = workflow(&seven_zip);
         let first = workflow.extract(&archive).expect("first extraction");
         assert_eq!(first.output.file_name().unwrap().to_string_lossy(), name);
         assert_eq!(
@@ -2596,7 +2604,7 @@ mod tests {
             .expect("create archive with 7-Zip");
         assert!(status.success(), "7-Zip must create the hard-link archive");
 
-        let outcome = ExtractionWorkflow::with_source_cleaner(&seven_zip, RemoveSource)
+        let outcome = workflow(&seven_zip)
             .extract(&archive)
             .expect("hard links must not fail the input");
 
