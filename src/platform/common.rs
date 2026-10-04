@@ -4,10 +4,10 @@ use std::path::{Path, PathBuf};
 
 use ezz::{ExtractionError, ExtractionOutcome, ExtractionWarning};
 use log::{error, info, warn};
-use notify_rust::Notification;
 use simplelog::{Config, ConfigBuilder, LevelFilter, WriteLogger, format_description};
 
 /// 拒绝报告里最多列出的输入路径条数。完整清单始终进日志（设计 §3.3）。
+#[cfg(target_os = "windows")]
 const MAX_REPORTED_INPUTS: usize = 4;
 
 pub struct PlatformPaths {
@@ -91,11 +91,11 @@ pub fn report_outcome(input: &Path, result: &Result<ExtractionOutcome, Extractio
                     outcome.warnings.len()
                 ));
             }
-            show_notification(&format!("{name} extracted"), &body);
+            super::show_notification(&format!("{name} extracted"), &body);
         }
         Err(extraction_error) => {
             error!("failed to extract {}: {extraction_error}", input.display());
-            show_notification(&format!("{name} failed"), &extraction_error.to_string());
+            super::show_notification(&format!("{name} failed"), &extraction_error.to_string());
         }
     }
 }
@@ -104,11 +104,12 @@ pub fn report_outcome(input: &Path, result: &Result<ExtractionOutcome, Extractio
 ///
 /// 措辞必须是"已跳过"而不是"失败"：另一个 ezz 正在运行，本次输入只是没有被处理，
 /// 这不是错误。报告走通知通道，不使用模态弹窗 —— 多选调用可能连续出现多条。
+#[cfg(target_os = "windows")]
 pub fn report_skipped(inputs: &[PathBuf]) {
     // 无参数启动时没有可点名的输入：只说"已经在运行"。
     if inputs.is_empty() {
         warn!("skipped this launch: another ezz instance is already running");
-        show_notification(
+        super::show_notification(
             "Already running",
             "Another ezz is already running. Please try again later.",
         );
@@ -142,7 +143,7 @@ pub fn report_skipped(inputs: &[PathBuf]) {
     } else {
         format!("{} files skipped", inputs.len())
     };
-    show_notification(&summary, &body);
+    super::show_notification(&summary, &body);
 }
 
 fn display_name(path: &Path) -> String {
@@ -191,13 +192,4 @@ fn log_warning(warning: &ExtractionWarning) {
     }
 }
 
-fn show_notification(summary: &str, body: &str) {
-    if let Err(notification_error) = Notification::new()
-        .appname("ezz")
-        .summary(summary)
-        .body(body)
-        .show()
-    {
-        warn!("could not show desktop notification: {notification_error}");
-    }
-}
+// 通知通道由平台模块提供（设计 §12）：Windows 是 WinRT toast，macOS 是 UNUserNotificationCenter。

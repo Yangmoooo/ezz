@@ -1,8 +1,3 @@
-use std::cell::{Cell, RefCell};
-use std::collections::VecDeque;
-use std::error::Error;
-use std::path::{Path, PathBuf};
-
 use ezz::{ExtractionWorkflow, PasswordPrompt, PasswordResponse};
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
@@ -16,9 +11,17 @@ use objc2_foundation::{
     MainThreadMarker, NSArray, NSNotification, NSObject, NSObjectNSDelayedPerforming,
     NSObjectProtocol, NSPoint, NSRect, NSSize, NSString, ns_string,
 };
+use std::cell::{Cell, RefCell};
+use std::collections::VecDeque;
+use std::error::Error;
+use std::path::{Path, PathBuf};
 
 use super::RunOutcome;
 use super::common::{PlatformPaths, initialize_logging, report_outcome};
+
+mod notifications;
+
+pub(crate) use notifications::show_notification;
 
 /// 处理完成后退出前的让出时间（秒）。
 ///
@@ -228,6 +231,10 @@ impl PasswordPrompt for MacPasswordPrompt {
 pub fn run() -> Result<RunOutcome, Box<dyn Error>> {
     let paths = PlatformPaths::discover()?;
     initialize_logging(&paths.log_file)?;
+
+    // 通知需要用户授权（§12）：在打包成 .app 的环境里问一次，被拒绝只记录。
+    // 放在提取之前，让首次运行时的授权框先出现，不至于丢掉第一条完成通知。
+    notifications::request_authorization();
 
     // 启动时解析并校验引擎（§11）：缺失时 main() 弹一次明确提示，不让每个输入各报一次。
     let workflow = ExtractionWorkflow::with_password_support(

@@ -14,7 +14,6 @@ path = "src/main.rs"
 
 [dependencies]
 log = "0.4"
-notify-rust = "4.18"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 simplelog = "0.12"
@@ -27,17 +26,30 @@ trash = "5.2"
 objc2 = "0.6.4"
 objc2-app-kit = "0.3.2"
 objc2-foundation = "0.3.2"
+objc2-user-notifications = { version = "0.3.2", features = ["block2"] }
+block2 = "0.6"
 
+# 每个平台只用一个原生绑定生态（设计 §12）：这里只有 `windows` crate，没有第三方窗口、
+# 对话框或通知包装库。`trash` 是明确保留的例外（它的底层就是 IFileOperation 与
+# NSFileManager，手写的收益最小而风险最高）。
 [target.'cfg(target_os = "windows")'.dependencies]
-native-windows-derive = "1.0.5"
-# `image-decoder` 是零依赖的特性开关，但**不能缺**：密码弹窗用 `source_bin` 从内存
-# 加载图标，缺了它会在弹窗构建时 panic（v2.0.6 用的是默认特性 `all`，所以没这个问题）。
-# Phase 5 改用资源表里的 `DIALOGEX` 后，图标走 `LoadIconW`，这个特性可以再去掉。
-native-windows-gui = { version = "1.0.13", default-features = false, features = ["file-dialog", "high-dpi", "image-decoder"] }
-windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Threading", "Win32_UI_Shell"] }
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Com",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Threading",
+    "Win32_System_WinRT",
+    "Win32_UI_Controls",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_Common",
+    "Win32_UI_WindowsAndMessaging",
+    "Data_Xml_Dom",
+    "UI_Notifications",
+] }
 
 [target.'cfg(windows)'.build-dependencies]
-winres = "0.1"
+embed-resource = "3"
 
 [dev-dependencies]
 zip = { version = "6", default-features = false, features = ["deflate"] }
