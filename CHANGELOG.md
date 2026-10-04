@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 并发调用改为每平台原生串行化：Windows 从启动到退出持有命名互斥体，拿不到时立即跳过并报告（点名本次调用的文件；无参数启动则提示已在运行）；macOS 由应用单实例与主线程同步提取保证
 - 进程退出码：任一输入失败或启动失败为 `1`，全部成功为 `0`（被跳过与取消文件选择器仍为 `0`）
 - macOS 和 Windows 使用各自原生桌面交互，核心解压行为由共享 Rust library 提供
+- 发布物改用不含版本号的文件名：`ezz-windows-x64.zip` 与 `ezz-macos-arm64.dmg`；包内目录同样不含版本号，版本只由 exe 的 `VERSIONINFO` 与 `Info.plist` 承载
+- macOS 发布物由 ZIP 改为 DMG（卷标 `Ezz`，含指向 `/Applications` 的符号链接），许可证文本放进 `.app` 内部的 `Contents/Resources/licenses/`
 
 ### Removed
 

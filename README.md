@@ -8,7 +8,7 @@ v3 不提供命令行接口、主窗口、任务列表或持久化设置。
 
 | 平台 | 架构 | 最低版本 | 发布格式 |
 | --- | --- | --- | --- |
-| macOS | Apple Silicon (`arm64`) | macOS 11 | ZIP 中的 `ezz.app` |
+| macOS | Apple Silicon (`arm64`) | macOS 11 | DMG 中的 `ezz.app` |
 | Windows | x64 | Windows 10 | Portable ZIP |
 
 Linux、macOS Intel、Windows ARM 和 macOS 10.x 不属于 v3 支持范围。v2 的 tag 和历史发布会保留，但不再维护。
@@ -26,8 +26,8 @@ Linux、macOS Intel、Windows ARM 和 macOS 10.x 不属于 v3 支持范围。v2 
 
 ### macOS
 
-1. 下载 `ezz-<版本>-macos-arm64.zip` 并解压。
-2. 将 `ezz.app` 移到“应用程序”目录。
+1. 下载 `ezz-macos-arm64.dmg` 并打开。
+2. 把 `ezz.app` 拖进“应用程序”目录（可以直接拖到 DMG 里那个 `/Applications` 链接上）。
 3. 首次运行时在 Finder 中右键点击 `ezz.app`，选择“打开”，再确认打开。
 
 首发版本使用 ad-hoc 签名，没有 Apple Developer ID 签名和公证。如果右键打开仍被拦截，可在“系统设置 > 隐私与安全性”中选择“仍要打开”。最后的手动方案是：
@@ -40,7 +40,7 @@ xattr -dr com.apple.quarantine /Applications/ezz.app
 
 ### Windows
 
-1. 下载并完整解压 `ezz-<版本>-windows-x64.zip`。
+1. 下载并完整解压 `ezz-windows-x64.zip`。
 2. 保持 `ezz.exe` 与 `7zz.exe` 位于同一目录。
 3. 用 `ezz.exe` 打开归档，或直接启动 `ezz.exe` 后选择文件。
 
@@ -131,36 +131,66 @@ v2 的 `.ezz.pw` 是文本文件（在旁边可执行文件同目录，或用户
 
 ## 构建与测试
 
-普通 `cargo build` 不访问网络，也不会自动下载 7-Zip。首次开发或运行真实端到端测试前执行：
+普通 `cargo build` 不访问网络，也不会自动下载 7-Zip。仓库里有一个 [`justfile`](./justfile)，常用命令都可以用 `just` 调用（直接运行 `just` 会列出全部配方）：
 
 ```sh
-cargo xtask prepare
+just prepare      # 首次开发前执行一次：下载并校验固定版本的 7-Zip 引擎
+just test         # 单元测试与契约测试
+just test-ignored # 需要真实 7-Zip 的端到端测试，以及 Windows 对话框测试
+just verify       # 提交前跑这个：格式、两个平台的 clippy、全部测试
 ```
 
-该命令下载固定的 7zz-bin 26.02 平台资产、校验 SHA-256，并缓存到 `target/ezz-tools/26.02/`。需要代理时只对当前命令设置环境变量即可：
+`just prepare` 下载固定的 7zz-bin 26.02 平台资产、校验 SHA-256，并缓存到 `target/ezz-tools/26.02/`。需要代理时只对当前命令设置环境变量即可：
 
 ```sh
 HTTPS_PROXY=http://127.0.0.1:PORT \
 HTTP_PROXY=http://127.0.0.1:PORT \
-cargo xtask prepare
+just prepare
 ```
 
-本机验证命令：
+不装 `just` 时，等价的原生命令是：
 
 ```sh
+cargo xtask prepare
 cargo fmt --all -- --check
 cargo test --workspace --all-targets
-cargo test --lib -- --ignored
+cargo test --workspace --all-targets -- --ignored
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-生成当前平台发布物：
+macOS 代码可以在 Windows 或 Linux 上做真实的编译与 lint 检查（只需先 `rustup target add aarch64-apple-darwin`）：
 
 ```sh
-cargo xtask package
+just check-mac
+# 等价于：cargo check -p ezz --all-targets --target aarch64-apple-darwin
 ```
 
-输出位于 `target/dist/`。macOS 打包会生成 plist、裁剪 arm64 7zz、依次 ad-hoc 签名 7zz 和应用包并验证签名；Windows 打包会生成包含完整运行文件和许可证的 Portable ZIP。
+只检查 `ezz` 本体：`xtask` 依赖 `xz2`（liblzma）这类 C 代码，无法在非 macOS 主机上交叉编译，它由 macOS 上的 CI 原生构建。
+
+### 发布物
+
+```sh
+just package      # 等价于 cargo xtask package
+```
+
+输出位于 `target/dist/`，文件名不含版本号：
+
+| 平台 | 产物 | 内容 |
+| --- | --- | --- |
+| Windows | `ezz-windows-x64.zip` | `ezz-windows-x64/`：`ezz.exe`、`7zz.exe`、原样拷贝的 `README.md` 与 `CHANGELOG.md`、`licenses/` |
+| macOS | `ezz-macos-arm64.dmg` | 卷标 `Ezz`：`ezz.app`（内含 `7zz`、图标与 `licenses/`）、原样拷贝的 `README.md` 与 `CHANGELOG.md`、指向 `/Applications` 的符号链接 |
+
+版本只有一个来源：`Cargo.toml` 的 `package.version`。Windows 写在 exe 的 `VERSIONINFO` 里，macOS 写在 `Info.plist` 里。
+
+macOS 打包会裁剪 arm64 的 `7zz`、先生成 plist、再依次 ad-hoc 签名 `7zz` 与应用包并验证签名，最后用 `hdiutil` 生成 DMG；Windows 打包会生成包含完整运行文件、文档与许可证的 Portable ZIP。
+
+### 发布流程
+
+1. 把 `CHANGELOG.md` 里的 `[Unreleased]` 改名为即将发布的版本号并写上日期。
+2. 同步 `Cargo.toml` 的 `package.version`，提交。
+3. 打 tag 并推送：`git tag v3.0.0 && git push origin v3.0.0`。
+
+推 tag 会触发 `.github/workflows/release.yml`：两个平台各自打包并检查产物内容（DMG 会真实挂载校验布局与签名），然后在同一个 Release 里附上 `SHA256SUMS` 和从 CHANGELOG 解析出的发行说明。CI 在每次推送到 `main` 时也会走同一条打包路径，所以发布流程不会在发布当天才第一次运行。
 
 ## 许可证
 

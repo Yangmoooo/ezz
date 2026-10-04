@@ -8,6 +8,9 @@ on:
 permissions:
   contents: write
 
+env:
+  RUSTFLAGS: --deny warnings
+
 jobs:
   build:
     name: Build ${{ matrix.platform }}
@@ -18,10 +21,10 @@ jobs:
         include:
           - os: macos-15
             platform: macos-arm64
-            artifact: target/dist/ezz-*-macos-arm64.zip
+            artifact: target/dist/ezz-macos-arm64.dmg
           - os: windows-latest
             platform: windows-x64
-            artifact: target/dist/ezz-*-windows-x64.zip
+            artifact: target/dist/ezz-windows-x64.zip
 
     steps:
       - name: Checkout code
@@ -63,6 +66,10 @@ jobs:
         with:
           path: artifacts
           merge-multiple: true
+
+      - name: Generate checksums
+        working-directory: artifacts
+        run: sha256sum ezz-* > SHA256SUMS
 
       - name: Install changelog parser
         uses: taiki-e/install-action@parse-changelog

@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 #[cfg(target_os = "macos")]
 use xz2::read::XzDecoder;
 #[cfg(target_os = "windows")]
-use zip::{CompressionMethod, ZipArchive, ZipWriter, write::SimpleFileOptions};
+use zip::ZipArchive;
 
 const SEVEN_ZIP_VERSION: &str = "26.02";
 
@@ -90,13 +90,12 @@ fn run() -> Result<(), Box<dyn Error>> {
 fn package() -> Result<PathBuf, Box<dyn Error>> {
     let seven_zip = prepare()?;
     build_release()?;
-    let version = package_version()?;
 
     #[cfg(target_os = "macos")]
-    return package_macos(&version, &seven_zip);
+    return package_macos(&seven_zip);
 
     #[cfg(target_os = "windows")]
-    return package_windows(&version, &seven_zip);
+    return package_windows(&seven_zip);
 }
 
 fn build_release() -> Result<(), Box<dyn Error>> {
@@ -112,6 +111,9 @@ fn build_release() -> Result<(), Box<dyn Error>> {
     }
 }
 
+/// 版本号的唯一来源是根 `Cargo.toml` 的 `package.version`（与 `build.rs` 喂给
+/// `VERSIONINFO` 的 `CARGO_PKG_VERSION` 是同一个值）。
+#[cfg(target_os = "macos")]
 fn package_version() -> Result<String, Box<dyn Error>> {
     let manifest = fs::read_to_string(workspace_root().join("Cargo.toml"))?;
     let manifest: toml::Value = toml::from_str(&manifest)?;
@@ -124,11 +126,14 @@ fn package_version() -> Result<String, Box<dyn Error>> {
 }
 
 #[cfg(target_os = "macos")]
-fn package_macos(version: &str, seven_zip: &Path) -> Result<PathBuf, Box<dyn Error>> {
+fn package_macos(seven_zip: &Path) -> Result<PathBuf, Box<dyn Error>> {
     let root = workspace_root();
     let dist = root.join("target").join("dist");
     fs::create_dir_all(&dist)?;
-    let stage = dist.join(format!("ezz-{version}-macos-arm64"));
+
+    // 卷标是用户在 Finder 里看到的名字（显示名用 `Ezz`）；发布物文件名保持小写标识符（§11.1）。
+    let volume_name = "Ezz";
+    let stage = dist.join("stage-macos");
     if stage.exists() {
         fs::remove_dir_all(&stage)?;
     }
@@ -158,12 +163,14 @@ fn package_macos(version: &str, seven_zip: &Path) -> Result<PathBuf, Box<dyn Err
         root.join("assets/icon/ezz.icns"),
         resources.join("ezz.icns"),
     )?;
+    // 许可证放在 .app 内：应用即分发单元，被单独拷走时仍然合规（§11.2）。
     fs::copy(root.join("LICENSE"), licenses.join("ezz-LICENSE.txt"))?;
     for name in ["License.txt", "copying.txt", "man.txt", "unRarLicense.txt"] {
         fs::copy(root.join("assets/7zip").join(name), licenses.join(name))?;
     }
-    write_macos_plist(&contents.join("Info.plist"), version)?;
+    write_macos_plist(&contents.join("Info.plist"), &package_version()?)?;
 
+    // 必须先签嵌套的 7zz，再签应用包（§11.2）。
     run_command(
         Command::new("codesign")
             .args(["--force", "--sign", "-", "--timestamp=none"])
@@ -183,24 +190,23 @@ fn package_macos(version: &str, seven_zip: &Path) -> Result<PathBuf, Box<dyn Err
         "verify ezz.app signature",
     )?;
 
-    let archive = dist.join(format!("ezz-{version}-macos-arm64.zip"));
+    // DMG 根目录：仓库文件原样拷贝（README 说明首次如何放行 Gatekeeper），
+    // 以及一个指向 /Applications 的符号链接（"拖进应用程序"的直觉，§11.2）。
+    fs::copy(root.join("README.md"), stage.join("README.md"))?;
+    fs::copy(root.join("CHANGELOG.md"), stage.join("CHANGELOG.md"))?;
+    std::os::unix::fs::symlink("/Applications", stage.join("Applications"))?;
+
+    let archive = dist.join("ezz-macos-arm64.dmg");
     if archive.exists() {
         fs::remove_file(&archive)?;
     }
     run_command(
-        Command::new("ditto")
-            .args([
-                "-c",
-                "-k",
-                "--keepParent",
-                "--norsrc",
-                "--noextattr",
-                "--noqtn",
-                "--noacl",
-            ])
-            .arg(&app)
+        Command::new("hdiutil")
+            .args(["create", "-volname", volume_name, "-srcfolder"])
+            .arg(&stage)
+            .args(["-ov", "-format", "UDZO"])
             .arg(&archive),
-        "create macOS release ZIP",
+        "create macOS release DMG",
     )?;
     Ok(archive)
 }
@@ -266,12 +272,13 @@ fn write_macos_plist(path: &Path, version: &str) -> Result<(), Box<dyn Error>> {
 }
 
 #[cfg(target_os = "windows")]
-fn package_windows(version: &str, seven_zip: &Path) -> Result<PathBuf, Box<dyn Error>> {
+fn package_windows(seven_zip: &Path) -> Result<PathBuf, Box<dyn Error>> {
     let root = workspace_root();
     let dist = root.join("target").join("dist");
     fs::create_dir_all(&dist)?;
-    let folder_name = format!("ezz-{version}-windows-x64");
-    let stage = dist.join(&folder_name);
+    // 包内目录名与发布物文件名都不得包含版本号（§11.1）。
+    let folder_name = "ezz-windows-x64";
+    let stage = dist.join(folder_name);
     if stage.exists() {
         fs::remove_dir_all(&stage)?;
     }
@@ -283,6 +290,9 @@ fn package_windows(version: &str, seven_zip: &Path) -> Result<PathBuf, Box<dyn E
         stage.join("ezz.exe"),
     )?;
     fs::copy(seven_zip, stage.join("7zz.exe"))?;
+    // 仓库文件原样拷贝，不生成也不改写（§11.1）。
+    fs::copy(root.join("README.md"), stage.join("README.md"))?;
+    fs::copy(root.join("CHANGELOG.md"), stage.join("CHANGELOG.md"))?;
     fs::copy(root.join("LICENSE"), licenses.join("ezz-LICENSE.txt"))?;
     for name in ["License.txt", "copying.txt", "man.txt", "unRarLicense.txt"] {
         fs::copy(root.join("assets/7zip").join(name), licenses.join(name))?;
@@ -292,42 +302,18 @@ fn package_windows(version: &str, seven_zip: &Path) -> Result<PathBuf, Box<dyn E
     if archive.exists() {
         fs::remove_file(&archive)?;
     }
-    let mut writer = ZipWriter::new(File::create(&archive)?);
-    append_directory_to_zip(&mut writer, &stage, &folder_name)?;
-    writer.finish()?;
+    // 用随发布物一起交付的同一个引擎打包：相对路径、真实时间戳（`zip` crate 只能写 1980）。
+    run_command(
+        Command::new(seven_zip)
+            .current_dir(&dist)
+            .args(["a", "-tzip", "-mx=9"])
+            .arg(&archive)
+            .arg(folder_name),
+        "create Windows release ZIP",
+    )?;
     Ok(archive)
 }
 
-#[cfg(target_os = "windows")]
-fn append_directory_to_zip(
-    writer: &mut ZipWriter<File>,
-    directory: &Path,
-    archive_directory: &str,
-) -> Result<(), Box<dyn Error>> {
-    let options = SimpleFileOptions::default()
-        .compression_method(CompressionMethod::Deflated)
-        .unix_permissions(0o644);
-    writer.add_directory(format!("{archive_directory}/"), options)?;
-
-    let mut entries = fs::read_dir(directory)?.collect::<Result<Vec<_>, _>>()?;
-    entries.sort_by_key(|entry| entry.file_name());
-    for entry in entries {
-        let path = entry.path();
-        let name = format!(
-            "{archive_directory}/{}",
-            entry.file_name().to_string_lossy()
-        );
-        if path.is_dir() {
-            append_directory_to_zip(writer, &path, &name)?;
-        } else {
-            writer.start_file(name, options)?;
-            io::copy(&mut File::open(path)?, writer)?;
-        }
-    }
-    Ok(())
-}
-
-#[cfg(target_os = "macos")]
 fn run_command(command: &mut Command, operation: &str) -> Result<(), Box<dyn Error>> {
     let status = command.status()?;
     if status.success() {
