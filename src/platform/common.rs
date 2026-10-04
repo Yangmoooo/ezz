@@ -83,20 +83,39 @@ pub fn report_outcome(input: &Path, result: &Result<ExtractionOutcome, Extractio
             for warning in &outcome.warnings {
                 log_warning(warning);
             }
-
-            let mut body = outcome.output.display().to_string();
-            if !outcome.warnings.is_empty() {
-                body.push_str(&format!(
-                    "\n{} warning(s), see the log for details",
-                    outcome.warnings.len()
-                ));
-            }
-            super::show_notification(&format!("{name} extracted"), &body);
+            // 标题不带文件名（设计 §3.2）：名字在正文里出现一次就够了。
+            super::show_notification("Extraction complete", &success_body(outcome));
         }
         Err(extraction_error) => {
             error!("failed to extract {}: {extraction_error}", input.display());
-            super::show_notification(&format!("{name} failed"), &extraction_error.to_string());
+            super::show_notification("Extraction failed", &failure_body(&name, extraction_error));
         }
+    }
+}
+
+/// 成功通知的正文：最终实际路径（§5.3 要求），有警告时补一行数量。
+///
+/// 文件名就在路径里，所以标题不再重复它。
+fn success_body(outcome: &ExtractionOutcome) -> String {
+    let mut body = outcome.output.display().to_string();
+    if !outcome.warnings.is_empty() {
+        body.push_str(&format!(
+            "\n{} warning(s), see the log for details",
+            outcome.warnings.len()
+        ));
+    }
+    body
+}
+
+/// 失败通知的正文：文件名 + 原因。
+///
+/// 有的错误变体（如 `InputNotFound`）自带路径，那就不要再补一次名字：名字只出现一次。
+fn failure_body(name: &str, error: &ExtractionError) -> String {
+    let reason = error.to_string();
+    if reason.contains(name) {
+        reason
+    } else {
+        format!("{name}\n{reason}")
     }
 }
 
@@ -152,6 +171,40 @@ fn display_name(path: &Path) -> String {
         .unwrap_or_else(|| path.display().to_string())
 }
 
+/// 密码弹窗第一行的说明文字（设计 §7）。
+///
+/// 文件名单独占一行（Windows 交给 `SS_PATHELLIPSIS`，macOS 交给 `truncate_middle`），
+/// 所以这句必须短到不会换行。两个平台的文案都在这里，改词只改一处。
+pub fn password_prompt_message(previous_attempt_failed: bool) -> &'static str {
+    if previous_attempt_failed {
+        "The password was incorrect. Try again."
+    } else {
+        "Enter the password for:"
+    }
+}
+
+/// 名字过长时从中间省略（macOS 用；Windows 由系统在绘制时处理）。
+///
+/// 放在这里而不是 macOS 模块里，是为了让它的用例在任意主机上都能跑。
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+///
+/// 保留开头与结尾：文件名最有信息量的部分正是这两端（`archive…part3.rar`）。按**字符**
+/// 而不是字节计数，避免把 Unicode 名字切成半个字符。
+pub fn truncate_middle(name: &str, limit: usize) -> String {
+    let characters: Vec<char> = name.chars().collect();
+    if characters.len() <= limit || limit < 3 {
+        return name.to_owned();
+    }
+
+    let keep = limit - 1; // 一个字符留给省略号
+    let head = keep.div_ceil(2);
+    let tail = keep - head;
+    let mut shortened: String = characters[..head].iter().collect();
+    shortened.push('…');
+    shortened.extend(&characters[characters.len() - tail..]);
+    shortened
+}
+
 fn log_warning(warning: &ExtractionWarning) {
     match warning {
         ExtractionWarning::SourceCleanupFailed { sources, message } => warn!(
@@ -193,3 +246,72 @@ fn log_warning(warning: &ExtractionWarning) {
 }
 
 // 通知通道由平台模块提供（设计 §12）：Windows 是 WinRT toast，macOS 是 UNUserNotificationCenter。
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn password_prompt_message_reports_a_previous_failure() {
+        assert_eq!(password_prompt_message(false), "Enter the password for:");
+        assert_eq!(
+            password_prompt_message(true),
+            "The password was incorrect. Try again."
+        );
+    }
+
+    #[test]
+    fn truncate_middle_keeps_both_ends() {
+        assert_eq!(truncate_middle("archive.7z", 20), "archive.7z");
+        assert_eq!(
+            truncate_middle("averyveryverylongarchive.7z", 16),
+            "averyver…hive.7z"
+        );
+    }
+
+    #[test]
+    fn truncate_middle_counts_characters_not_bytes() {
+        let shortened = truncate_middle("归档文件非常长的一个名字.7z", 10);
+        assert_eq!(shortened.chars().count(), 10);
+        assert!(shortened.starts_with('归'));
+        assert!(shortened.ends_with("7z"));
+    }
+
+    fn outcome_with(warnings: Vec<ExtractionWarning>) -> ExtractionOutcome {
+        ExtractionOutcome {
+            input: PathBuf::from("C:/data/archive.7z"),
+            output: PathBuf::from("C:/data/payload"),
+            warnings,
+        }
+    }
+
+    #[test]
+    fn success_body_is_the_final_path_and_counts_warnings() {
+        // 与平台无关地比较路径：`display()` 在 Windows 上会用正斜杠。
+        let plain = outcome_with(Vec::new());
+        assert_eq!(success_body(&plain), plain.output.display().to_string());
+
+        let with_warning = outcome_with(vec![ExtractionWarning::EngineWarnings {
+            message: "warning".to_owned(),
+        }]);
+        let body = success_body(&with_warning);
+        assert!(
+            body.starts_with(&with_warning.output.display().to_string()),
+            "{body}"
+        );
+        assert!(body.contains("\n1 warning(s)"), "{body}");
+    }
+
+    #[test]
+    fn failure_body_names_the_input_exactly_once() {
+        // 错误消息里没有名字：补上它。
+        let body = failure_body("archive.7z", &ExtractionError::WrongPassword);
+        assert_eq!(body, "archive.7z\nArchive password is incorrect");
+
+        // 错误消息自带路径：不再补一次名字。
+        let missing = PathBuf::from("C:/data/archive.7z");
+        let body = failure_body("archive.7z", &ExtractionError::InputNotFound(missing));
+        assert_eq!(body, "Input does not exist: C:/data/archive.7z");
+        assert_eq!(body.matches("archive.7z").count(), 1, "{body}");
+    }
+}

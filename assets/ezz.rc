@@ -11,7 +11,9 @@
 
 #define EZZ_ICON_ID              1
 #define EZZ_DIALOG_ID            101
-#define EZZ_ID_INFORMATION       1001
+/* 第一行是说明，第二行是文件名（设计 §7）。两行分开，长文件名才不会把说明挤掉。 */
+#define EZZ_ID_MESSAGE           1001
+#define EZZ_ID_FILENAME          1005
 #define EZZ_ID_PASSWORD          1002
 #define EZZ_ID_REMEMBER          1003
 #define EZZ_ID_KEEP_ORIGINAL     1004
@@ -50,17 +52,20 @@ BEGIN
   END
 END
 
-EZZ_DIALOG_ID DIALOGEX 0, 0, 224, 120
+EZZ_DIALOG_ID DIALOGEX 0, 0, 200, 90
 STYLE DS_SETFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Password required"
 FONT 9, "Segoe UI", 400, 0, 1
 BEGIN
-  LTEXT           "", EZZ_ID_INFORMATION, 8, 8, 208, 34
-  EDITTEXT        EZZ_ID_PASSWORD, 8, 46, 208, 14, ES_PASSWORD | ES_AUTOHSCROLL
+  LTEXT           "", EZZ_ID_MESSAGE, 8, 4, 184, 10
+  /* SS_PATHELLIPSIS：名字太长时由系统从中间省略（保住开头的名称与结尾的扩展名），
+     不需要我们按字符数截断，DPI 与字体变化也不会出错。 */
+  LTEXT           "", EZZ_ID_FILENAME, 8, 15, 184, 10, SS_PATHELLIPSIS
+  EDITTEXT        EZZ_ID_PASSWORD, 8, 32, 184, 10, ES_PASSWORD | ES_AUTOHSCROLL
   CONTROL         "Remember this password", EZZ_ID_REMEMBER, "Button",
-                  BS_AUTOCHECKBOX | WS_TABSTOP, 8, 66, 208, 12
+                  BS_AUTOCHECKBOX | WS_TABSTOP, 8, 46, 184, 10
   CONTROL         "Keep the original archive", EZZ_ID_KEEP_ORIGINAL, "Button",
-                  BS_AUTOCHECKBOX | WS_TABSTOP, 8, 82, 208, 12
-  DEFPUSHBUTTON   "Extract", IDOK, 104, 100, 56, 16
-  PUSHBUTTON      "Cancel", IDCANCEL, 164, 100, 56, 16
+                  BS_AUTOCHECKBOX | WS_TABSTOP, 8, 58, 184, 10
+  DEFPUSHBUTTON   "Extract", IDOK, 100, 72, 40, 12
+  PUSHBUTTON      "Cancel", IDCANCEL, 144, 72, 40, 12
 END

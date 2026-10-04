@@ -30,7 +30,10 @@ const ID_CANCEL: u32 = IDCANCEL.0 as u32;
 
 /// 对话框上下文：由 `DialogBoxParamW` 的 `lParam` 传入，随后挂在窗口的 `DWLP_USER` 上。
 struct DialogContext {
-    information: String,
+    /// 第一行：说明（重试时改成“密码不对”）。
+    message: String,
+    /// 第二行：文件名。过长时由模板里的 `SS_PATHELLIPSIS` 在绘制时从中间省略。
+    filename: String,
     response: Option<PasswordResponse>,
 }
 
@@ -57,7 +60,11 @@ fn show(
     previous_attempt_failed: bool,
 ) -> Result<Option<PasswordResponse>, Box<dyn Error>> {
     let mut context = DialogContext {
-        information: information_text(input, previous_attempt_failed),
+        message: super::super::common::password_prompt_message(previous_attempt_failed).to_owned(),
+        filename: input
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| input.as_os_str().to_string_lossy().into_owned()),
         response: None,
     };
 
@@ -78,18 +85,6 @@ fn show(
     }
 
     Ok(context.response)
-}
-
-fn information_text(input: &Path, previous_attempt_failed: bool) -> String {
-    let filename = input
-        .file_name()
-        .map(|name| name.to_string_lossy())
-        .unwrap_or_else(|| input.as_os_str().to_string_lossy());
-    if previous_attempt_failed {
-        format!("The password for {filename} was incorrect. Try again.")
-    } else {
-        format!("Enter the password for {filename}.")
-    }
 }
 
 /// 对话框过程函数：返回 `1` 表示已处理，`0` 表示交给对话框管理器。
@@ -160,9 +155,14 @@ unsafe extern "system" fn dialog_proc(
 /// # Safety
 /// 只能由持有有效窗口句柄的对话框过程调用。
 unsafe fn initialize_controls(window: HWND, context: &DialogContext) {
-    let text = super::wide(&context.information);
-    // SAFETY: 控件 ID 来自资源脚本；`text` 以 NUL 结尾且在调用期间存活。
-    let _ = unsafe { SetDlgItemTextW(window, super::ID_INFORMATION, PCWSTR(text.as_ptr())) };
+    let message = super::wide(&context.message);
+    let filename = super::wide(&context.filename);
+    // SAFETY: 控件 ID 来自资源脚本；两个缓冲区都以 NUL 结尾且在调用期间存活。
+    // 文件名一行带 `SS_PATHELLIPSIS`，长度由系统在绘制时处理。
+    unsafe {
+        let _ = SetDlgItemTextW(window, super::ID_MESSAGE, PCWSTR(message.as_ptr()));
+        let _ = SetDlgItemTextW(window, super::ID_FILENAME, PCWSTR(filename.as_ptr()));
+    }
 
     // SAFETY: 实例句柄是本进程，资源 ID 来自资源脚本。
     let icon = unsafe { LoadIconW(Some(super::instance()), super::resource_id(super::ICON_ID)) }
@@ -248,18 +248,18 @@ mod tests {
         SERIAL.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// 文案随“上一次失败”变化（设计 §7）：不复现弹窗也能验证。
+    /// 文案随“上一次失败”变化（设计 §7）：纯函数，在 `common` 里有用例；
+    /// 这里只留一个安全检查，保证弹窗拿到的不是空串。
     #[test]
-    fn information_text_reports_a_previous_failure() {
-        let input = Path::new("C:/data/archive.7z");
-        assert_eq!(
-            information_text(input, false),
-            "Enter the password for archive.7z."
-        );
-        assert_eq!(
-            information_text(input, true),
-            "The password for archive.7z was incorrect. Try again."
-        );
+    fn prompt_message_is_never_empty() {
+        for failed in [false, true] {
+            let message = super::super::super::common::password_prompt_message(failed);
+            assert!(!message.is_empty());
+            assert!(
+                message.len() < 60,
+                "the message must fit on one line: {message}"
+            );
+        }
     }
 
     /// 等对话框出现：`show` 在另一个线程里创建它，这里轮询窗口标题。
@@ -319,6 +319,41 @@ mod tests {
                 Some(LPARAM(0)),
             );
         }
+    }
+
+    /// 资源模板里的两行文案接对了：说明在第一行、文件名在第二行，
+    /// 并且文件名那一行带 `SS_PATHELLIPSIS`（超长名字由系统从中间省略）。
+    #[test]
+    #[ignore = "requires an interactive desktop session"]
+    fn the_template_splits_the_message_and_the_filename() {
+        let _serial = serial();
+        super::super::initialize_process().expect("initialize process");
+
+        let long_name = "a-very-long-archive-name-that-cannot-fit-2026-10-04.7z";
+        let driver = std::thread::spawn(move || {
+            let window = wait_for_dialog();
+            // SAFETY: 控件属于本进程的对话框；缓冲区由 `GetDlgItemTextW` 填充。
+            unsafe {
+                let style = windows::Win32::UI::WindowsAndMessaging::GetWindowLongPtrW(
+                    windows::Win32::UI::WindowsAndMessaging::GetDlgItem(
+                        Some(window),
+                        super::super::ID_FILENAME,
+                    )
+                    .expect("filename control"),
+                    windows::Win32::UI::WindowsAndMessaging::GWL_STYLE,
+                );
+                // winuser.h：`#define SS_PATHELLIPSIS 0x00008000L`。windows crate 没有导出它。
+                const SS_PATHELLIPSIS: isize = 0x0000_8000;
+                assert_eq!(
+                    style & SS_PATHELLIPSIS,
+                    SS_PATHELLIPSIS,
+                    "the filename line must ellipsize in the middle"
+                );
+                drive_dialog("", ID_CANCEL, None, None);
+            }
+        });
+        let _ = show(Path::new(long_name), false).expect("show the dialog");
+        driver.join().expect("driver thread");
     }
 
     #[test]

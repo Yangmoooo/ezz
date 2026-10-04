@@ -17,7 +17,9 @@ use std::error::Error;
 use std::path::{Path, PathBuf};
 
 use super::RunOutcome;
-use super::common::{PlatformPaths, initialize_logging, report_outcome};
+use super::common::{
+    PlatformPaths, initialize_logging, password_prompt_message, report_outcome, truncate_middle,
+};
 
 mod notifications;
 
@@ -28,6 +30,9 @@ pub(crate) use notifications::show_notification;
 /// 0 表示只让出一个 run loop 回合：同一次激活里已经排队的打开事件先被派发（§3.3
 /// "处理完就退出"）。之后再到达的交付由 LaunchServices 重新启动应用处理。
 const QUIT_AFTER: f64 = 0.0;
+
+/// 弹窗里文件名的字符上限：`NSAlert` 不会帮我们中间省略，名字太长会把告警框撑得很宽。
+const FILENAME_LIMIT: usize = 48;
 
 struct AppDelegateIvars {
     workflow: ExtractionWorkflow,
@@ -161,14 +166,14 @@ impl PasswordPrompt for MacPasswordPrompt {
         alert.setMessageText(ns_string!("Password required"));
         let filename = input
             .file_name()
-            .map(|name| name.to_string_lossy())
-            .unwrap_or_else(|| input.as_os_str().to_string_lossy());
-        let information = if previous_attempt_failed {
-            format!("The password for {filename} was incorrect. Try again.")
-        } else {
-            format!("Enter the password for {filename}.")
-        };
-        alert.setInformativeText(&NSString::from_str(&information));
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| input.as_os_str().to_string_lossy().into_owned());
+        // 说明一行、文件名一行（§7）：名字单独省略，不会把说明挤掉。
+        alert.setInformativeText(&NSString::from_str(&format!(
+            "{}\n{}",
+            password_prompt_message(previous_attempt_failed),
+            truncate_middle(&filename, FILENAME_LIMIT)
+        )));
         alert.addButtonWithTitle(ns_string!("Extract"));
         alert.addButtonWithTitle(ns_string!("Cancel"));
 
