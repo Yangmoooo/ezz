@@ -4,12 +4,14 @@
 )))]
 compile_error!("ezz v3 only supports Windows and macOS");
 
-mod application;
+mod engine;
+mod explorer;
 mod password_store;
+mod process;
 mod seven_zip;
 mod workflow;
 
-pub use application::{BatchReport, DesktopApplication, FileOutcome};
+pub use engine::{EngineError, OVERRIDE_VARIABLE, locate_engine};
 pub use workflow::{
     ExtractionError, ExtractionOutcome, ExtractionWarning, ExtractionWorkflow, PasswordPrompt,
     PasswordResponse,

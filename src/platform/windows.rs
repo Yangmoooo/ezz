@@ -1,30 +1,62 @@
-use std::collections::VecDeque;
 use std::error::Error;
-use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{self, Receiver};
-use std::time::Duration;
 
-use ezz::{DesktopApplication, ExtractionWorkflow, PasswordPrompt, PasswordResponse};
-use interprocess::local_socket::{
-    GenericNamespaced, Listener, ListenerOptions, Stream, prelude::*,
-};
-use log::{info, warn};
+use ezz::{ExtractionWorkflow, PasswordPrompt, PasswordResponse};
+use log::warn;
 use native_windows_derive::NwgUi;
 use native_windows_gui as nwg;
 use nwg::NativeUi;
-use serde::{Deserialize, Serialize};
+use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_ABANDONED, WAIT_OBJECT_0};
+use windows::Win32::System::Threading::{CreateMutexW, WaitForSingleObject};
+use windows::core::PCWSTR;
 
-use super::common::{PlatformPaths, finish_batch, initialize_logging, notify_started};
+use super::RunOutcome;
+use super::common::{PlatformPaths, initialize_logging, report_outcome, report_skipped};
 
-const INSTANCE_NAME: &str = "io.github.yangmoooo.ezz.v3";
-const IDLE_TIMEOUT: Duration = Duration::from_millis(750);
+/// 全局串行化互斥体（设计 §3.3）。
+///
+/// `Local\` 命名空间与密码库的每用户作用域对齐；名字里不带版本号，跳版本也互斥。
+const EXTRACT_MUTEX: &str = "Local\\io.github.yangmoooo.ezz.extract";
+
 const ICON_DATA: &[u8] = include_bytes!("../../assets/icon/ezz.ico");
 
-#[derive(Debug, Serialize, Deserialize)]
-enum InstanceMessage {
-    OpenFiles(Vec<String>),
-    PickFiles,
+/// 进程启动即持有、直到退出的命名互斥体：一个用户会话里只能有一个 ezz。
+///
+/// 加锁早于文件选择器与密码弹窗，因此**不需要推理"交互期间该不该持锁"** —— 拒绝永远
+/// 发生在调用到达的那一刻，不会出现"用户已经选完文件才被告知跳过"。拿到之后**不再释放**，
+/// 由进程退出交给系统回收（不需 `ReleaseMutex`），因此不实现 `Drop`。
+struct ExtractionLock {
+    /// 句柄故意不在进程内关闭：关闭即等于释放。
+    _handle: HANDLE,
+}
+
+impl ExtractionLock {
+    /// 非阻塞尝试获取。返回 `None` 表示另一个 ezz 正在提取，本次调用必须立即拒绝。
+    fn try_acquire() -> Option<Self> {
+        let name = wide(EXTRACT_MUTEX);
+        // 安全：`name` 是以 NUL 结尾的 UTF-16 缓冲区，在调用期间保持存活；`None` 表示
+        // 使用默认安全属性（§3.3 不需要跨用户共享）。
+        let handle = unsafe { CreateMutexW(None, false, PCWSTR(name.as_ptr())) }.ok()?;
+
+        // 安全：`handle` 刚刚由 `CreateMutexW` 返回且有效；等待 0 毫秒即非阻塞尝试。
+        let status = unsafe { WaitForSingleObject(handle, 0) };
+        // WAIT_OBJECT_0：互斥体现在归本次调用所有。
+        // WAIT_ABANDONED：上一个持有者崩溃或被强制结束，互斥体已释放，同样归我们所有。
+        // 其余（WAIT_TIMEOUT）：别人正持有 —— 立即放弃，不进入任何等待状态。
+        if status == WAIT_OBJECT_0 || status == WAIT_ABANDONED {
+            return Some(Self { _handle: handle });
+        }
+
+        // 安全：拒绝路径上我们从未获得所有权，这个句柄必须立刻关闭，否则会泄漏。
+        unsafe {
+            let _ = CloseHandle(handle);
+        }
+        None
+    }
+}
+
+fn wide(value: &str) -> Vec<u16> {
+    value.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
 #[derive(Default, NwgUi)]
@@ -140,132 +172,63 @@ impl PasswordPrompt for WindowsPasswordPrompt {
     }
 }
 
-pub fn run() -> Result<(), Box<dyn Error>> {
+pub fn run() -> Result<RunOutcome, Box<dyn Error>> {
     let paths = PlatformPaths::discover()?;
     initialize_logging(&paths.log_file)?;
     nwg::init()?;
     nwg::Font::set_global_family("Segoe UI")?;
 
-    let initial_paths: Vec<_> = std::env::args_os().skip(1).map(PathBuf::from).collect();
-    let instance_name = INSTANCE_NAME.to_ns_name::<GenericNamespaced>()?;
-    let listener = match ListenerOptions::new()
-        .name(instance_name.clone())
-        .create_sync()
-    {
-        Ok(listener) => listener,
-        Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => {
-            forward_to_primary(instance_name, message_for_paths(initial_paths))?;
-            return Ok(());
-        }
-        Err(error) => return Err(error.into()),
+    // 同一次调用里的多个参数一律处理，不得拒绝（§3.3）。
+    let inputs: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
+
+    // 加锁早于一切用户交互：锁的语义是"每用户会话一个 ezz"，从启动持有到退出。
+    // 拿不到就立即拒绝并报告，不进入等待状态（§3.3）。
+    let Some(_lock) = ExtractionLock::try_acquire() else {
+        report_skipped(&inputs);
+        // 被跳过不是失败（§3.3）。
+        return Ok(RunOutcome::Succeeded);
     };
 
-    let receiver = start_instance_listener(listener);
-    let executable = std::env::current_exe()?;
+    // 引擎在启动时解析并校验一次（§11.1）：缺失就在这里报一次，不让每个输入各报一次。
+    // 放在锁之后、选择器之前：被跳过的调用不必抱怨引擎，用户也不会先选完文件再被告知。
+    let engine = ezz::locate_engine()?;
+
+    // 没有输入才显示文件选择器；走到这里时锁已在手上。
+    let inputs = if inputs.is_empty() {
+        select_files()?
+    } else {
+        inputs
+    };
+    if inputs.is_empty() {
+        // 用户在选择器里取消：什么都没要求，不是失败。
+        return Ok(RunOutcome::Succeeded);
+    }
+
     let workflow = ExtractionWorkflow::with_password_support(
-        executable.with_file_name("7zz.exe"),
+        engine,
         paths.password_database,
         WindowsPasswordPrompt,
     );
-    let application = DesktopApplication::new(workflow);
-    let mut pending: VecDeque<_> = initial_paths.into();
-    if pending.is_empty() {
-        pending.extend(select_files()?);
+
+    let mut failed = false;
+    for input in &inputs {
+        let result = workflow.extract(input);
+        if result.is_err() {
+            failed = true;
+        }
+        report_outcome(input, &result);
     }
 
-    loop {
-        if !pending.is_empty() {
-            let inputs: Vec<_> = pending.drain(..).collect();
-            notify_started(inputs.len());
-            finish_batch(&application.process_files(inputs));
-        }
-
-        match receiver.recv_timeout(IDLE_TIMEOUT) {
-            Ok(InstanceMessage::OpenFiles(paths)) => {
-                pending.extend(paths.into_iter().map(PathBuf::from));
-            }
-            Ok(InstanceMessage::PickFiles) => pending.extend(select_files()?),
-            Err(mpsc::RecvTimeoutError::Timeout) => break,
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                return Err("single-instance listener stopped unexpectedly".into());
-            }
-        }
-    }
-
-    Ok(())
+    Ok(if failed {
+        RunOutcome::Failed
+    } else {
+        RunOutcome::Succeeded
+    })
 }
 
 pub fn show_fatal_error(message: &str) {
     let _ = nwg::init();
     nwg::error_message("ezz could not start", message);
-}
-
-fn message_for_paths(paths: Vec<PathBuf>) -> InstanceMessage {
-    if paths.is_empty() {
-        InstanceMessage::PickFiles
-    } else {
-        InstanceMessage::OpenFiles(
-            paths
-                .into_iter()
-                .map(|path| path.to_string_lossy().into_owned())
-                .collect(),
-        )
-    }
-}
-
-fn forward_to_primary(
-    name: interprocess::local_socket::Name<'_>,
-    message: InstanceMessage,
-) -> Result<(), Box<dyn Error>> {
-    let mut last_error = None;
-    for _ in 0..10 {
-        match Stream::connect(name.clone()) {
-            Ok(mut stream) => {
-                serde_json::to_writer(&mut stream, &message)?;
-                stream.write_all(b"\n")?;
-                stream.flush()?;
-                info!("forwarded input to the running ezz instance");
-                return Ok(());
-            }
-            Err(error) => {
-                last_error = Some(error);
-                std::thread::sleep(Duration::from_millis(50));
-            }
-        }
-    }
-    Err(last_error
-        .map(|error| format!("could not contact the running ezz instance: {error}"))
-        .unwrap_or_else(|| "could not contact the running ezz instance".to_owned())
-        .into())
-}
-
-fn start_instance_listener(listener: Listener) -> Receiver<InstanceMessage> {
-    let (sender, receiver) = mpsc::channel();
-    std::thread::spawn(move || {
-        for connection in listener.incoming() {
-            let mut connection = match connection {
-                Ok(connection) => BufReader::new(connection),
-                Err(error) => {
-                    warn!("could not accept forwarded input: {error}");
-                    continue;
-                }
-            };
-            let mut line = String::new();
-            if let Err(error) = connection.read_line(&mut line) {
-                warn!("could not read forwarded input: {error}");
-                continue;
-            }
-            match serde_json::from_str(&line) {
-                Ok(message) => {
-                    if sender.send(message).is_err() {
-                        break;
-                    }
-                }
-                Err(error) => warn!("ignored invalid forwarded input: {error}"),
-            }
-        }
-    });
-    receiver
 }
 
 fn select_files() -> Result<Vec<PathBuf>, nwg::NwgError> {
