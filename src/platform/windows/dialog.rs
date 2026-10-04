@@ -474,13 +474,13 @@ mod tests {
         true.into()
     }
 
-    /// 每个按钮类控件都必须带助记键（`&X`），而且字母在对话框内唯一。
+    /// 三个勾选项必须有互不冲突的助记键（`Alt` + 字母）；OK / Cancel 必须没有。
     ///
     /// Win32 的助记键是 `Alt` + 字母，文字里的 `&` 会被画成下划线；单独的字母不会生效
-    /// （焦点在密码框时字母是要输入的密码，不能拿来当快捷键）。
+    /// （焦点在密码框时字母是要输入的密码）。OK / Cancel 靠 Enter / Esc，不需要助记键。
     #[test]
     #[ignore = "requires an interactive desktop session"]
-    fn button_labels_have_unique_mnemonics() {
+    fn checkbox_labels_have_unique_mnemonics() {
         let _serial = serial();
         super::super::initialize_process().expect("initialize process");
 
@@ -521,23 +521,42 @@ mod tests {
         });
         let _ = show(false).expect("show the dialog");
         let labels = driver.join().expect("driver thread");
+        let label_of = |identifier: i32| {
+            labels
+                .iter()
+                .find(|(candidate, _)| *candidate == identifier)
+                .map(|(_, label)| label.clone())
+                .unwrap_or_else(|| panic!("control {identifier} not found in {labels:?}"))
+        };
 
         let mut mnemonics: Vec<char> = Vec::new();
-        for (identifier, label) in &labels {
+        for identifier in [
+            super::super::ID_SHOW_PASSWORD,
+            super::super::ID_REMEMBER,
+            super::super::ID_KEEP_ORIGINAL,
+        ] {
+            let label = label_of(identifier);
             let letter = label
                 .find('&')
                 .and_then(|index| label[index + 1..].chars().next());
             let Some(letter) = letter else {
-                panic!("control {identifier} has no mnemonic: {label:?}");
+                panic!("checkbox {identifier} has no mnemonic: {label:?}");
             };
             mnemonics.push(letter.to_ascii_uppercase());
         }
 
-        assert!(!mnemonics.is_empty(), "no buttons were found");
         mnemonics.sort_unstable();
         let mut unique = mnemonics.clone();
         unique.dedup();
         assert_eq!(mnemonics, unique, "duplicate mnemonics: {mnemonics:?}");
+
+        for identifier in [IDOK.0, IDCANCEL.0] {
+            let label = label_of(identifier);
+            assert!(
+                !label.contains('&'),
+                "button {identifier} does not need a mnemonic: {label:?}"
+            );
+        }
     }
 
     /// 模板里不得有重复的控件 ID。

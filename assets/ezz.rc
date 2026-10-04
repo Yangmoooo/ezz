@@ -61,13 +61,13 @@ BEGIN
   LTEXT           "", EZZ_ID_PROMPT, 8, 4, 144, 10
   EDITTEXT        EZZ_ID_PASSWORD, 8, 16, 144, 11, ES_PASSWORD | ES_AUTOHSCROLL
   /* `&` 是助记键（Win32 里用 `Alt` + 字母触发，单独敲字母不会生效）：
-     Alt+S / Alt+R / Alt+K 切三个勾选项，Alt+O / Alt+C 等同 OK / Cancel。 */
+     Alt+S / Alt+R / Alt+K 切三个勾选项。OK / Cancel 不加：Enter 与 Esc 已经覆盖它们。 */
   CONTROL         "&Show password", EZZ_ID_SHOW_PASSWORD, "Button",
                   BS_AUTOCHECKBOX | WS_TABSTOP, 8, 34, 144, 8
   CONTROL         "&Remember this password", EZZ_ID_REMEMBER, "Button",
                   BS_AUTOCHECKBOX | WS_TABSTOP, 8, 44, 144, 8
   CONTROL         "&Keep the original archive", EZZ_ID_KEEP_ORIGINAL, "Button",
                   BS_AUTOCHECKBOX | WS_TABSTOP, 8, 54, 144, 8
-  DEFPUSHBUTTON   "&OK", IDOK, 15, 70, 60, 12
-  PUSHBUTTON      "&Cancel", IDCANCEL, 85, 70, 60, 12
+  DEFPUSHBUTTON   "OK", IDOK, 15, 70, 60, 12
+  PUSHBUTTON      "Cancel", IDCANCEL, 85, 70, 60, 12
 END
