@@ -1,6 +1,4 @@
-//! 文件选择器：`IFileOpenDialog`（设计 §3.3、§12）。
-//!
-//! 不引入 `rfd` 之类的包装库：COM 接口直接可用，且 COM 已在启动时初始化。
+//! 文件选择器：`IFileOpenDialog`。COM 已在启动时初始化。
 
 use std::error::Error;
 use std::path::PathBuf;
@@ -19,7 +17,7 @@ pub(super) fn select_files() -> Result<Vec<PathBuf>, Box<dyn Error>> {
         let dialog: IFileOpenDialog =
             CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER)?;
 
-        // 多选、只接受真实存在的文件系统路径（与原来的选择器行为一致）。
+        // 多选、只接受真实存在的文件系统路径。
         let options = dialog.GetOptions()?
             | FOS_ALLOWMULTISELECT
             | FOS_FILEMUSTEXIST

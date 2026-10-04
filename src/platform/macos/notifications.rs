@@ -1,7 +1,4 @@
-//! 通知：`UNUserNotificationCenter`（设计 §12）。
-//!
-//! 取代 `notify-rust`：它的 macOS 后端是 2018 年就已废弃的 `NSUserNotification`。
-//! 代价是首次使用要请求一次系统授权，换来的是权限状态可知（不再是"发了但看不到"）。
+//! 通知：`UNUserNotificationCenter`。首次使用需要用户授权。
 
 use std::error::Error;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -16,9 +13,7 @@ use objc2_user_notifications::{
     UNNotificationSound, UNUserNotificationCenter,
 };
 
-/// 启动时请求通知授权（设计 §12）。
-///
-/// 每次启动都调用：系统只在第一次真正弹授权框，之后是幂等的。被拒绝只记录，不影响解压。
+/// 启动时请求通知授权；系统只在第一次弹授权框，之后幂等。被拒绝只记录。
 pub(super) fn request_authorization() {
     let Some(center) = center() else {
         return;
@@ -57,7 +52,7 @@ fn send(summary: &str, body: &str) -> Result<(), Box<dyn Error>> {
     let content = UNMutableNotificationContent::new();
     content.setTitle(&NSString::from_str(summary));
     content.setBody(&NSString::from_str(body));
-    // 与 Windows 侧一致：用系统默认提示音（Windows 的 toast 自带提示音）。
+    // 与 Windows 侧一致：用系统默认提示音。
     content.setSound(Some(&UNNotificationSound::defaultSound()));
 
     // 标识只用于去重：带上毫秒时间戳，保证每条通知都单独出现。
@@ -74,10 +69,7 @@ fn send(summary: &str, body: &str) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-/// `UNUserNotificationCenter` 只在有 bundle 标识符的进程里可用。
-///
-/// `cargo run`（没有 `.app`）时直接跳过并记录：通知是完成后的附加信息，不值得让它
-/// 把开发期的每一次提取都变成一条警告。
+/// `UNUserNotificationCenter` 只在有 bundle 标识符的进程里可用；没有时跳过并记录。
 fn center() -> Option<Retained<UNUserNotificationCenter>> {
     // 没有 bundle 标识符就直接放弃：`?` 会把 `None` 传出去。
     let _ = NSBundle::mainBundle().bundleIdentifier()?;

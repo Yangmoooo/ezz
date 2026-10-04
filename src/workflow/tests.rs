@@ -1,7 +1,7 @@
-//! 工作流级测试：真实引擎 + 真实文件系统的行为契约（设计 §9、§13）。
+//! 工作流级测试：真实引擎 + 真实文件系统。
 //!
-//! 纯函数和单模块的用例留在各自模块里（`archive_set`、`commit`、`safety`）。这里的每个
-//! 用例都从 `ExtractionWorkflow::extract` 进入，只断言可观察结果。
+//! 每个用例都从 `ExtractionWorkflow::extract` 进入，只断言可观察结果；纯函数与单模块的用例
+//! 留在各自模块里。
 
 use std::collections::VecDeque;
 use std::io::Write;
@@ -394,7 +394,7 @@ fn symbolic_link_that_escapes_the_result_is_discarded_and_reported() {
     create_archive(&seven_zip, sandbox.path(), &archive, &["escape"]);
     std::fs::remove_file(&link).expect("remove source symlink");
 
-    // 设计 §5.4 / D1：不安全条目不得否决整个输入。
+    // 不安全条目不得否决整个输入。
     let outcome = workflow(&seven_zip)
         .extract(&archive)
         .expect("an escaping link must not fail the whole input");
@@ -468,7 +468,7 @@ fn parent_directory_entry_is_sanitized_and_reported() {
         .expect("write ZIP entry");
     writer.finish().expect("finish unsafe ZIP");
 
-    // 设计 §5.4 / D1：路径需要消毒的条目保留（数据不得丢失），但必须报告。
+    // 路径需要消毒的条目保留（数据不得丢失），但必须报告。
     let outcome = workflow(&seven_zip)
         .extract(&archive)
         .expect("a sanitized path must not fail the whole input");
@@ -1012,7 +1012,7 @@ fn zip_non_first_volume_extracts_and_cleans_the_complete_set() {
     assert!(!final_volume.exists(), "final ZIP volume must be cleaned");
 }
 
-/// 符号链接条目：逃逸的必须被报告且不得以链接形态提交，内部的保留（R4 同批的 D1 行为）。
+/// 符号链接条目：逃逸的必须被报告且不得以链接形态提交，内部的保留。
 #[test]
 #[ignore = "requires cargo xtask prepare"]
 fn symbolic_link_entries_do_not_fail_the_input() {
@@ -1089,7 +1089,7 @@ fn symbolic_link_entries_do_not_fail_the_input() {
     }
 }
 
-/// 剔除平台元数据后没有内容：降级成功 + 报告（设计 §5.1 门 3）。
+/// 剔除平台元数据后没有内容：降级成功 + 报告。
 #[test]
 #[ignore = "requires cargo xtask prepare"]
 fn archive_with_only_platform_metadata_is_a_reported_degraded_success() {
@@ -1163,8 +1163,8 @@ fn write_tar(path: &Path, entries: &[(&str, &[u8])]) {
     std::fs::write(path, &bytes).expect("write tar");
 }
 
-/// 盘符前缀条目（`C:\drive.txt`）：7-Zip 读取时会把它改写成 `C:_drive.txt`，提取时再
-/// 把非法字符 `:` 换成 `_`。数据必须保留在结果内，且必须报告（§5.4）。
+/// 盘符前缀条目（`C:\drive.txt`）：7-Zip 读取时把它改写成 `C:_drive.txt`，提取时再把
+/// 非法字符换成 `_`。数据必须保留且必须报告。
 ///
 /// 用 tar 而不是 zip：`zip` crate 会在写入时就把反斜杠换成下划线，造不出真的盘符条目。
 #[test]
@@ -1275,11 +1275,7 @@ fn corrupt_last_entry_byte(bytes: &mut [u8]) {
     bytes[directory_offset - 1] ^= 0xFF;
 }
 
-/// 单个条目损坏 → 降级成功：其余条目照常提交，**损坏条目也照旧提交**，只点名报告。
-///
-/// 实测：7-Zip 遇到 `CRC Failed` / `Data Error` 时退出码 2，但仍会把（损坏的）内容写进
-/// 输出。按设计 §5.5 的“层 1 透传”原则，ezz 不修改 7-Zip 写出来的东西 —— 命令行用户
-/// 会拿到那个坏文件与一条错误，ezz 用户也同样拿到它，区别只在于 ezz 把它写进结构化警告。
+/// 单个条目损坏 → 降级成功：其余条目照常提交，损坏条目也照旧提交，只点名报告。
 #[test]
 #[ignore = "requires cargo xtask prepare"]
 fn a_corrupted_entry_is_committed_and_reported_while_the_rest_is_kept() {
@@ -1329,21 +1325,20 @@ fn a_corrupted_entry_is_committed_and_reported_while_the_rest_is_kept() {
         "the corrupted entry must be named: {reported:?}"
     );
 
-    // 三个顶层项 → 结果是归档名命名的目录（§5.2）。
+    // 三个顶层项 → 结果是归档名命名的目录。
     assert!(outcome.output.is_dir(), "{:?}", outcome.output);
     assert!(
         outcome.output.join("good.txt").is_file() && outcome.output.join("third.txt").is_file(),
         "healthy entries must still be committed"
     );
-    // 层 1 透传（§5.5）：7-Zip 把损坏的条目也写出来了，ezz 不改它写出来的东西，
-    // 只是把条目名写进结构化警告。命令行用户与 ezz 用户拿到的结果因此一致。
+    // 7-Zip 把损坏的条目也写出来了，这里不改它的输出，只把条目名写进警告。
     assert!(
         outcome.output.join("bad.txt").is_file(),
         "the corrupted entry is written by 7-Zip and must not be removed by ezz"
     );
 }
 
-/// Unicode 与空格文件名：提交名必须原样保留，冲突时仍按 §5.3 递增序号。
+/// Unicode 与空格文件名：提交名原样保留，冲突时递增序号。
 #[test]
 #[ignore = "requires cargo xtask prepare"]
 fn unicode_and_space_names_are_committed_unchanged() {
@@ -1378,7 +1373,7 @@ fn unicode_and_space_names_are_committed_unchanged() {
     );
 }
 
-/// 特殊文件（FIFO）必须被丢弃并报告（§5.4）。Windows 上无法构造 FIFO，所以只在 Unix 跑。
+/// 特殊文件（FIFO）必须被丢弃并报告。Windows 上无法构造 FIFO，所以只在 Unix 跑。
 #[cfg(unix)]
 #[test]
 fn special_files_are_discarded_and_reported() {

@@ -111,8 +111,7 @@ fn build_release() -> Result<(), Box<dyn Error>> {
     }
 }
 
-/// 版本号的唯一来源是根 `Cargo.toml` 的 `package.version`（与 `build.rs` 喂给
-/// `VERSIONINFO` 的 `CARGO_PKG_VERSION` 是同一个值）。
+/// 版本号来自根 `Cargo.toml` 的 `package.version`。
 #[cfg(target_os = "macos")]
 fn package_version() -> Result<String, Box<dyn Error>> {
     let manifest = fs::read_to_string(workspace_root().join("Cargo.toml"))?;
@@ -131,7 +130,7 @@ fn package_macos(seven_zip: &Path) -> Result<PathBuf, Box<dyn Error>> {
     let dist = root.join("target").join("dist");
     fs::create_dir_all(&dist)?;
 
-    // 卷标是用户在 Finder 里看到的名字（显示名用 `Ezz`）；发布物文件名保持小写标识符（§11.1）。
+    // 卷标是用户在 Finder 里看到的名字；发布物文件名保持小写。
     let volume_name = "Ezz";
     let stage = dist.join("stage-macos");
     if stage.exists() {
@@ -163,14 +162,14 @@ fn package_macos(seven_zip: &Path) -> Result<PathBuf, Box<dyn Error>> {
         root.join("assets/icon/ezz.icns"),
         resources.join("ezz.icns"),
     )?;
-    // 许可证放在 .app 内：应用即分发单元，被单独拷走时仍然合规（§11.2）。
+    // 许可证放在 .app 内：应用被单独拷走时仍然合规。
     fs::copy(root.join("LICENSE"), licenses.join("ezz-LICENSE.txt"))?;
     for name in ["License.txt", "copying.txt", "man.txt", "unRarLicense.txt"] {
         fs::copy(root.join("assets/7zip").join(name), licenses.join(name))?;
     }
     write_macos_plist(&contents.join("Info.plist"), &package_version()?)?;
 
-    // 必须先签嵌套的 7zz，再签应用包（§11.2）。
+    // 先签嵌套的 7zz，再签应用包。
     run_command(
         Command::new("codesign")
             .args(["--force", "--sign", "-", "--timestamp=none"])
@@ -190,8 +189,7 @@ fn package_macos(seven_zip: &Path) -> Result<PathBuf, Box<dyn Error>> {
         "verify ezz.app signature",
     )?;
 
-    // DMG 根目录：仓库文件原样拷贝（README 说明首次如何放行 Gatekeeper），
-    // 以及一个指向 /Applications 的符号链接（"拖进应用程序"的直觉，§11.2）。
+    // DMG 根目录：仓库文件原样拷贝，外加一个指向 /Applications 的符号链接。
     fs::copy(root.join("README.md"), stage.join("README.md"))?;
     fs::copy(root.join("CHANGELOG.md"), stage.join("CHANGELOG.md"))?;
     std::os::unix::fs::symlink("/Applications", stage.join("Applications"))?;
@@ -276,7 +274,7 @@ fn package_windows(seven_zip: &Path) -> Result<PathBuf, Box<dyn Error>> {
     let root = workspace_root();
     let dist = root.join("target").join("dist");
     fs::create_dir_all(&dist)?;
-    // 包内目录名与发布物文件名都不得包含版本号（§11.1）。
+    // 包内目录名与发布物文件名都不含版本号。
     let folder_name = "ezz-windows-x64";
     let stage = dist.join(folder_name);
     if stage.exists() {
@@ -290,7 +288,7 @@ fn package_windows(seven_zip: &Path) -> Result<PathBuf, Box<dyn Error>> {
         stage.join("ezz.exe"),
     )?;
     fs::copy(seven_zip, stage.join("7zz.exe"))?;
-    // 仓库文件原样拷贝，不生成也不改写（§11.1）。
+    // 仓库文件原样拷贝，不生成也不改写。
     fs::copy(root.join("README.md"), stage.join("README.md"))?;
     fs::copy(root.join("CHANGELOG.md"), stage.join("CHANGELOG.md"))?;
     fs::copy(root.join("LICENSE"), licenses.join("ezz-LICENSE.txt"))?;

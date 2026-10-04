@@ -1,7 +1,6 @@
-//! 事务式提交：命名冲突、平台元数据剔除、空结果（设计 §5.1–§5.3）。
+//! 事务式提交：命名冲突、平台元数据剔除、空结果。
 //!
-//! 提交语义是 ezz 的产品契约（层 2）：工作目录里有什么由 7-Zip 决定，结果落到哪里、
-//! 叫什么名字由这里决定（§5.5）。
+//! 工作目录里有什么由 7-Zip 决定，结果落到哪里、叫什么名字由这里决定。
 
 use std::ffi::{OsStr, OsString};
 use std::fs;
@@ -9,12 +8,12 @@ use std::path::{Path, PathBuf};
 
 use super::{ExtractionError, file_system_error};
 
-/// 提交结果（设计 §5.2 / §5.3）。
+/// 提交结果。
 pub(super) struct Committed {
     pub(super) path: PathBuf,
     /// 被剔除的平台元数据条目名。
     pub(super) removed_metadata: Vec<String>,
-    /// 剔除后没有任何有效内容：提交的是一个空目录（§5.1 门 3）。
+    /// 剔除后没有任何有效内容：提交的是一个空目录。
     pub(super) empty: bool,
 }
 
@@ -31,8 +30,7 @@ pub(super) fn commit_output(
 
     let parent = input.parent().expect("validated input parent");
     match entries.len() {
-        // 剔除平台元数据后没有有效内容：输出为空是事实，不是错误（§5.1 门 3）。
-        // 提交一个以归档命名的空目录，让结果仍有一个最终实际路径。
+        // 输出为空是事实而不是错误：提交一个以归档命名的空目录，让结果仍有一个最终实际路径。
         0 => {
             let path = commit_empty_directory(parent, output_stem)?;
             Ok(Committed {
@@ -43,7 +41,7 @@ pub(super) fn commit_output(
         }
         1 => {
             let entry = entries.pop().expect("one extracted entry");
-            // 命名规则看条目**类型**：目录用 `name (1)`，文件用 `name (1).ext`（§5.3）。
+            // 目录用 `name (1)`，文件用 `name (1).ext`。
             let is_directory = entry
                 .file_type()
                 .map_err(|error| {
@@ -74,7 +72,7 @@ pub(super) fn commit_output(
     }
 }
 
-/// 提交一个空目录：没有内容要搬，直接把名字占下来（§5.1 门 3）。
+/// 提交一个空目录：直接把名字占下来。
 fn commit_empty_directory(parent: &Path, name: &OsStr) -> Result<PathBuf, ExtractionError> {
     for candidate in unique_destination_candidates(parent, name, CommitKind::Directory) {
         match fs::create_dir(&candidate) {
@@ -93,7 +91,7 @@ fn commit_empty_directory(parent: &Path, name: &OsStr) -> Result<PathBuf, Extrac
     unreachable!("u64 destination sequence exhausted")
 }
 
-/// 剔除平台元数据（§5.2），返回被剔除的条目名。
+/// 剔除平台元数据，返回被剔除的条目名。
 fn remove_platform_metadata(extracted: &Path) -> Result<Vec<String>, ExtractionError> {
     let mut removed = Vec::new();
     for name in ["__MACOSX", ".DS_Store"] {
@@ -117,11 +115,10 @@ enum CommitKind {
     Directory,
 }
 
-/// 把 `source` 提交为 `parent` 下的一个不冲突名字（§5.3）。
+/// 把 `source` 提交为 `parent` 下的一个不冲突名字。
 ///
-/// 候选名字按 `name`, `name (1)`, `name (2)` … 递增。若在探测与重命名之间被抢先
-/// （Windows 上互斥体已排除跨进程并发；只剩直接运行 macOS bundle 内的二进制这条
-/// 开发者路径），就继续递增序号重试，**绝不覆盖既有条目**。
+/// 候选名字按 `name`, `name (1)`, `name (2)` … 递增，**绝不覆盖既有条目**；名字在探测与
+/// 重命名之间被占用时继续递增重试。
 fn commit_with_unique_name(
     source: &Path,
     parent: &Path,
@@ -150,9 +147,7 @@ fn commit_with_unique_name(
     unreachable!("u64 destination sequence exhausted")
 }
 
-/// 生成 `name`, `name (1)`, `name (2)` … 的候选目的地。
-///
-/// 文件保留扩展名（`archive (1).zip`），目录整体递增（`archive.zip (1)`）。
+/// 生成候选目的地：文件保留扩展名（`archive (1).zip`），目录整体递增（`archive.zip (1)`）。
 fn unique_destination_candidates<'a>(
     parent: &'a Path,
     name: &'a OsStr,
@@ -199,7 +194,7 @@ mod tests {
             ["archive.tar.gz", "archive.tar (1).gz", "archive.tar (2).gz"]
         );
 
-        // 目录整体递增：不得把最后一个“扩展名”拆开（§5.3）。
+        // 目录整体递增：不得把最后一个“扩展名”拆开。
         let directories: Vec<String> =
             unique_destination_candidates(parent, OsStr::new("archive.tar"), CommitKind::Directory)
                 .take(3)

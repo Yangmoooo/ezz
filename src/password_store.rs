@@ -23,8 +23,7 @@ impl PasswordStore {
 
     /// 密码候选，按最近使用时间与使用次数排序。
     ///
-    /// 读取失败**不得**让任何输入失败（设计 §7）：记录警告、按空候选继续 —— 用户仍然
-    /// 可以在弹窗里输入密码。真正不可解析的文件会在下一次成功保存前被改名保留。
+    /// 读取失败不让任何输入失败：记录警告、按空候选继续，用户仍可在弹窗里输入密码。
     pub(crate) fn candidates(&self) -> Vec<String> {
         let mut database = match self.load() {
             Ok(database) => database,
@@ -88,8 +87,7 @@ impl PasswordStore {
 
     /// 把无法解析的密码库（含版本不受支持的）改名保留。
     ///
-    /// 不做这一步就会在保存时直接覆盖它，而且用户刚输入的密码会因为"每次都加载失败"
-    /// 而永远保存不下来（设计 §7）。改名失败也不阻止保存：坏文件的内容本来就已经不可用。
+    /// 不做这一步，保存时会直接覆盖它，用户每次输入的密码都因为加载失败而保存不下来。
     fn quarantine(&self) -> Result<(), String> {
         if !self.path.exists() {
             return Ok(());
@@ -111,8 +109,8 @@ impl PasswordStore {
 
     /// 读取不需要加锁：写入是原子的，读到的一定是某个完整版本。
     ///
-    /// 这里对**磁盘格式**做容错（设计 §7）：`passwords` 元素可以是字符串简写，`version`
-    /// 缺失按 1，`uses` / `last_used` 缺失按 0，未知字段忽略。
+    /// 磁盘格式全部容忍缺失：`passwords` 元素可以是字符串简写，`version` 缺失按 1，
+    /// `uses` / `last_used` 缺失按 0，未知字段忽略。
     fn load(&self) -> Result<PasswordDatabase, String> {
         if !self.path.exists() {
             return Ok(PasswordDatabase::default());
@@ -130,11 +128,8 @@ impl PasswordStore {
         Ok(file.into())
     }
 
-    /// 写入是原子的（临时文件 + 持久化重命名），但**不协调并发写入**：
-    ///
-    /// 两个 ezz 同时保存时，后写的会覆盖先写的（丢失一次密码记录），但不会产生半截文件。
-    /// Windows 从启动到退出持有命名互斥体、macOS 由应用单实例保证，正常只有一个 ezz 在跑；
-    /// 只有直接运行 macOS bundle 内的二进制时才可能遇到这种降级，属于已接受的残余。
+    /// 写入是原子的（临时文件 + 重命名），但不协调并发写入：同时保存时后写的覆盖先写的，
+    /// 但不会产生半截文件。
     fn save(&self, database: &PasswordDatabase) -> Result<(), String> {
         let parent = self
             .path
@@ -264,8 +259,7 @@ fn set_private_permissions(path: &Path) -> std::io::Result<()> {
     account.push(username);
     account.push(":F");
 
-    // 必须接管子进程输出：`icacls` 会把本地化的结果写进 stdout，让它继承宿主的标准输出
-    // 会在控制台里输出乱码（OEM 代码页）。（设计 §12：子进程输出不得写入宿主标准输出。）
+    // 必须接管子进程输出：`icacls` 的输出是本地化文本，继承宿主标准输出会在控制台里变成乱码。
     let output = crate::process::command("icacls.exe")
         .arg(path)
         .args(["/inheritance:r", "/grant:r"])

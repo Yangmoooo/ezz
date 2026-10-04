@@ -1,12 +1,8 @@
-//! 真实 `ezz.exe` 的契约测试（设计 §3.3 / D2 / D4.1）。
+//! 真实 `ezz` 二进制的契约测试：全局互斥体、退出码、多输入循环。
 //!
-//! 这些行为只存在于平台 adapter 与 `main()` 里（全局互斥体、退出码、多输入循环），
-//! 单元测试覆盖不到，所以这里直接跑二进制。
+//! 只在 Windows 上跑：macOS 的输入只走 Apple Event，直接运行 bundle 内的二进制不是产品路径。
 //!
-//! 只在 Windows 上做：macOS 的输入只走 Apple Event，直接运行 bundle 内的二进制不是产品
-//! 路径（设计 §4），在 macOS 上跑这个文件只会弹出一个文件选择器。
-//!
-//! 注意：真实二进制会用真实的回收站清理原归档，所以这些用例会把临时文件送进回收站。
+//! 注意：真实二进制会把原归档送进回收站。
 
 #![cfg(windows)]
 
@@ -110,7 +106,7 @@ fn multiple_inputs_are_processed_and_a_failed_one_does_not_stop_the_rest() {
     let status = run_ezz(&engine, sandbox.path(), &[&first, &missing, &second]);
 
     assert_eq!(status.code(), Some(1), "任一输入失败 → 退出码 1");
-    // 两个成功输入都必须提交：单顶层文件直接提交，第二个因重名而递增序号（§5.3）。
+    // 两个成功输入都必须提交：单顶层文件直接提交，第二个因重名而递增序号。
     assert!(
         sandbox.path().join("payload.txt").is_file(),
         "the first input must be committed"
@@ -148,7 +144,7 @@ fn a_call_is_skipped_while_another_ezz_holds_the_lock() {
 
     let status = run_ezz(&engine, sandbox.path(), &[&archive]);
 
-    assert_eq!(status.code(), Some(0), "被跳过不是失败（设计 §3.3）");
+    assert_eq!(status.code(), Some(0), "被跳过不是失败");
     assert!(archive.is_file(), "被跳过时不得清理原归档");
     assert!(
         !sandbox.path().join("payload.txt").exists(),
@@ -184,11 +180,7 @@ fn an_abandoned_lock_is_acquired_by_the_next_call() {
 
     let status = run_ezz(&engine, sandbox.path(), &[&archive]);
 
-    assert_eq!(
-        status.code(),
-        Some(0),
-        "WAIT_ABANDONED 必须视为已获得（设计 §3.3）"
-    );
+    assert_eq!(status.code(), Some(0), "WAIT_ABANDONED 必须视为已获得");
     assert!(
         sandbox.path().join("payload.txt").is_file(),
         "取得 abandoned 锁之后必须正常提取"

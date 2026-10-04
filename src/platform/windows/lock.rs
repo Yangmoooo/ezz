@@ -1,7 +1,4 @@
-//! 每用户会话的命名互斥体（设计 §3.3）。
-//!
-//! 进程启动即持有、直到退出：一个用户会话里只能有一个 ezz 在提取。因此**不需要**推理
-//! "交互期间该不该持锁" —— 拒绝永远发生在调用到达的那一刻。
+//! 每用户会话的命名互斥体：进程启动即持有到退出，同一会话里只能有一个实例在提取。
 
 use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_ABANDONED, WAIT_OBJECT_0};
 use windows::Win32::System::Threading::{CreateMutexW, WaitForSingleObject};

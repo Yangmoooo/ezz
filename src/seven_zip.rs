@@ -16,10 +16,9 @@ impl SevenZip {
         }
     }
 
-    /// 唯一的引擎调用出口（R1/R6）：构造子进程、执行、把启动失败归一成 `EngineLaunch`。
+    /// 构造并执行引擎子进程；启动失败统一归一成 `EngineLaunch`。
     ///
-    /// `crate::process::command` 是全程序唯一的子进程构造点（`CREATE_NO_WINDOW` 在它内部，
-    /// §11.1），所以这里同时是“不弹控制台窗口”的唯一落点。调用方只负责拼参数。
+    /// 子进程由 `crate::process::command` 构造，调用方只负责拼参数。
     fn execute(
         &self,
         configure: impl FnOnce(&mut std::process::Command),
@@ -34,11 +33,9 @@ impl SevenZip {
             })
     }
 
-    /// 前置扫描：一次 `l -slt -ba` 同时完成三件事 —— 校验条目路径（§5.4）、判定是否
-    /// 需要密码、挑出用于最小化校验的条目（R4/D2）。
+    /// 前置扫描：一次 `l -slt -ba` 同时拿到条目列表、是否需要密码、以及一个用于试密码的样本条目。
     ///
-    /// `password` 为空时，“表头加密”是一个**成功**结果而不是错误：需要密码不等于打不开。
-    /// 非空密码错误时照常返回 `WrongPassword`，供调用方区分候选密码。
+    /// `password` 为空时表头加密算**成功**（需要密码不等于打不开）；密码错误返回 `WrongPassword`。
     pub(crate) fn scan(
         &self,
         input: &Path,
@@ -143,7 +140,7 @@ impl SevenZip {
         Ok(output_dir.join(embedded))
     }
 
-    /// 校验候选密码。`entry` 为 `Some` 时只测试该条目（R4：不跑整包 `t`）。
+    /// 校验候选密码；`entry` 为 `Some` 时只测试该条目，不跑整包。
     pub(crate) fn test_password(
         &self,
         input: &Path,
@@ -206,7 +203,7 @@ impl SevenZip {
             return Ok(ExtractionVerdict::default());
         }
         if is_wrong_password(&message) {
-            // 混合加密归档：校验阶段可能通过而提取阶段仍报密码错（D2/R4）。
+            // 混合加密归档：试密码通过后，提取阶段仍可能报密码错。
             return Err(ExtractionError::WrongPassword);
         }
 
@@ -239,26 +236,25 @@ pub(crate) struct ArchiveScan {
     /// 用于最小化校验的条目：优先取声明加密的、最小的非空文件条目。
     pub(crate) sample_entry: Option<String>,
     /// 路径需要消毒的条目（`..`、绝对路径、盘符前缀）：7-Zip 会把它们重写进工作目录，
-    /// 数据保留，但必须报告（设计 §5.4）。
+    /// 数据保留但必须报告。
     pub(crate) sanitized: Vec<String>,
 }
 
-/// 一次提取的结局：两级结果模型里"降级成功"那一级的细节（设计 §5.1）。
+/// 一次提取的结局。
 #[derive(Debug, Default)]
 pub(crate) struct ExtractionVerdict {
     /// 退出码 1：引擎报了警告，但结果有效。内容是引擎消息。
     pub(crate) engine_warning: Option<String>,
-    /// 被引擎消毒的链接条目：7-Zip 拒绝了危险链接目标，把该条目降级成普通文件（实测行为）。
+    /// 被引擎消毒的链接条目：危险目标的链接被 7-Zip 降级成普通文件。
     pub(crate) sanitized_links: Vec<String>,
     /// 引擎报告数据损坏（`CRC Failed` / `Data Error`）的条目。
     ///
-    /// 实测：7-Zip 仍会把（损坏的）内容写进输出。层 1 透传（§5.5）：ezz 不修改引擎写出的
-    /// 内容，只把这份清单交给调用方报告。
+    /// 这类条目仍会被写进输出，这里只负责报告。
     pub(crate) failed_entries: Vec<String>,
 }
 
 enum Classified {
-    /// 结果有效：退出码 0，或退出码 1（Warning），或退出码 2 且所有错误行都是可容忍的逐条目失败。
+    /// 结果有效：退出码 0、退出码 1（Warning），或退出码 2 且所有错误行都是可容忍的逐条目失败。
     Accepted {
         engine_warning: Option<String>,
         sanitized_links: Vec<String>,
@@ -268,7 +264,7 @@ enum Classified {
     Fatal,
 }
 
-/// 把一次提取的退出码与引擎消息分成"降级成功"或"致命失败"（纯函数，便于测试）。
+/// 把一次提取的退出码与引擎消息分成"降级成功"或"致命失败"。
 fn classify(exit_code: Option<i32>, message: &str) -> Classified {
     match exit_code {
         // 退出码 1（Warning）：结果已提交，但引擎报了警告。
@@ -289,14 +285,14 @@ fn classify(exit_code: Option<i32>, message: &str) -> Classified {
     }
 }
 
-/// 退出码 2 的降级条件（D1/D2）：**所有** `ERROR:` 行都必须是可容忍的逐条目失败。
+/// 退出码 2 的降级条件：**所有** `ERROR:` 行都必须是可容忍的逐条目失败。
 ///
-/// 可容忍的两类（都是实测出来的）：
-/// - `ERROR: Dangerous link path was ignored : <条目> : <目标>` —— 链接被降级成普通文件；
-/// - `ERROR: CRC Failed : <条目>` / `ERROR: Data Error : <条目>` —— 单个条目数据损坏。
+/// 可容忍的两类：
+/// - `ERROR: Dangerous link path was ignored : <条目> : <目标>`；
+/// - `ERROR: CRC Failed : <条目>` / `ERROR: Data Error : <条目>`。
 ///
-/// 出现任何其它错误行（包括 `ERROR: Data Error in encrypted file. Wrong password?`，
-/// 它的冒号不在前缀之后）都不降级。
+/// 其它错误行（例如 `ERROR: Data Error in encrypted file. Wrong password?`，它的冒号不在
+/// 前缀之后）都不降级。
 fn tolerated_exit_two(message: &str) -> Option<(Vec<String>, Vec<String>)> {
     let mut sanitized = Vec::new();
     let mut failed = Vec::new();
@@ -309,7 +305,7 @@ fn tolerated_exit_two(message: &str) -> Option<(Vec<String>, Vec<String>)> {
         }
         saw_error = true;
 
-        // 注意：`entry_after` 返回 `None` 只表示“不是这个前缀”，所以这里不能用 `?`。
+        // 前缀不匹配时 `entry_after` 返回 `None`，所以这里不能直接用 `?`。
         if let Some(entry) = entry_after(line, "ERROR: Dangerous link path was ignored") {
             sanitized.push(entry);
             continue;
@@ -330,7 +326,7 @@ fn tolerated_exit_two(message: &str) -> Option<(Vec<String>, Vec<String>)> {
 
 /// 取出 `ERROR: <前缀> : <条目>[ : <额外>]` 里的条目名。
 ///
-/// 前缀之后必须紧跟冒号，这样 `ERROR: Data Error` 不会误吞
+/// 前缀之后必须紧跟冒号，否则 `ERROR: Data Error` 会误吞
 /// `ERROR: Data Error in encrypted file. Wrong password? : x`。
 fn entry_after(line: &str, prefix: &str) -> Option<String> {
     let rest = line.strip_prefix(prefix)?.trim();
@@ -341,10 +337,8 @@ fn entry_after(line: &str, prefix: &str) -> Option<String> {
 
 /// 解析 `l -slt -ba` 输出（条目之间以空行分隔）。
 ///
-/// 这里的判据来自实测，不是文档：目录靠 `Attributes` 的首字符识别（Windows 风格的 `D`
-/// 与 Unix 宿主的 `drwx…`，所以两种都要认；26.02 的输出里根本不出现 `Folder = +`）；
-/// `Encrypted = -` 也会出现，所以必须精确比较 `+`；0 字节条目 **不能**当校验样本 ——
-/// 实测用错密码测空文件也会报 `Everything is Ok`。
+/// 目录靠 `Attributes` 的首字符识别（`D` 或 `drwx`）；`Encrypted` 只有精确等于 `+` 才算加密；
+/// 0 字节条目不能当校验样本（用错密码测空文件也会报 `Everything is Ok`）。
 fn parse_listing(listing: &str) -> ArchiveScan {
     let mut scan = ArchiveScan::default();
     let mut best_encrypted: Option<(u64, String)> = None;
@@ -568,7 +562,7 @@ mod tests {
 
     #[test]
     fn directories_are_detected_from_both_attribute_styles() {
-        // Windows 宿主的 `D…` 与 Unix 宿主的 `drwx…` 都必须认出来，否则目录会被当样本。
+        // Windows 宿主的 `D…` 与 Unix 宿主的 `drwx…` 都要认，否则目录会被当样本。
         let listing = "Path = win-dir\nSize = 0\nAttributes = D\n\nPath = unix-dir\nSize = 0\nAttributes = drwxr-xr-x\n\nPath = payload.txt\nSize = 4\nAttributes = -rw-r--r--\n\n";
         let scan = parse_listing(listing);
         assert_eq!(scan.sample_entry.as_deref(), Some("payload.txt"));

@@ -1,7 +1,4 @@
-//! Windows 平台实现（设计 §3.3、§12）。
-//!
-//! 这里只用一个原生绑定生态：`windows` crate。原先由 `native-windows-gui` 提供的东西
-//! 由本模块自己完成：进程初始化、密码弹窗（资源对话框）、文件选择器、通知。
+//! Windows 平台实现：进程初始化、密码弹窗（资源对话框）、文件选择器、通知。
 
 mod dialog;
 mod lock;
@@ -35,19 +32,18 @@ pub fn run() -> Result<RunOutcome, Box<dyn Error>> {
     let paths = PlatformPaths::discover()?;
     initialize_logging(&paths.log_file)?;
 
-    // 同一次调用里的多个参数一律处理，不得拒绝（§3.3）。
+    // 同一次调用里的多个参数一律处理。
     let inputs: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
 
-    // 加锁早于一切用户交互：锁的语义是"每用户会话一个 ezz"，从启动持有到退出。
-    // 拿不到就立即拒绝并报告，不进入等待状态（§3.3）。
+    // 锁从启动持有到退出，且早于一切用户交互：拿不到就立即拒绝并报告。
     let Some(_lock) = ExtractionLock::try_acquire() else {
         report_skipped(&inputs);
-        // 被跳过不是失败（§3.3）。
+        // 被跳过不是失败。
         return Ok(RunOutcome::Succeeded);
     };
 
-    // 引擎在启动时解析并校验一次（§11.1）：缺失就在这里报一次，不让每个输入各报一次。
-    // 放在锁之后、选择器之前：被跳过的调用不必抱怨引擎，用户也不会先选完文件再被告知。
+    // 引擎在这里解析并校验一次：缺失就在这里报一次，不让每个输入各报一次。
+    // 放在锁之后、选择器之前，被跳过的调用就不必抱怨引擎。
     let engine = ezz::locate_engine()?;
 
     // 没有输入才显示文件选择器；走到这里时锁已在手上。
@@ -98,10 +94,9 @@ pub fn show_fatal_error(message: &str) {
     }
 }
 
-/// 原先由 `nwg::init()` 提供的初始化（设计 §12）。必须在做任何 COM/shell/WinRT 调用之前执行。
+/// 进程初始化。必须在任何 COM/shell/WinRT 调用之前执行。
 fn initialize_process() -> Result<(), Box<dyn Error>> {
-    // COM 必须最先：`trash` 的 `IFileOperation` 与所有 shell API 都要求调用线程已初始化
-    // COM。遗漏它的症状是第一次移入回收站时直接失败。
+    // COM 必须最先：`trash` 的 `IFileOperation` 与所有 shell API 都要求调用线程已初始化。
     // SAFETY: 在主线程上调用；`None` 表示不载入类型库，使用默认安全属性。
     unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }.ok()?;
 
@@ -115,8 +110,7 @@ fn initialize_process() -> Result<(), Box<dyn Error>> {
         warn!("could not register common controls");
     }
 
-    // WinRT 的 apartment 必须与 COM 一致（都是 STA）。失败只影响通知，不影响解压，
-    // 所以只记录：便携版在未注册 AUMID 的机器上仍要能提取。
+    // WinRT 的 apartment 必须与 COM 一致（都是 STA）。失败只影响通知，所以只记录。
     // SAFETY: 与上面的 COM 初始化同为单线程 apartment。
     if let Err(error) = unsafe { RoInitialize(RO_INIT_SINGLETHREADED) } {
         warn!("could not initialize WinRT (notifications will be unavailable): {error}");
@@ -145,11 +139,11 @@ pub(super) fn resource_id(identifier: u32) -> PCWSTR {
 
 /// 控件与对话框的 ID：必须与 `assets/ezz.rc` 里的一致。
 pub(super) const DIALOG_ID: u32 = 101;
-/// 提示控件：只有提示词，没有文件名（文件名在通知与日志里）。
+/// 提示控件。
 pub(super) const ID_PROMPT: i32 = 1001;
 pub(super) const ID_PASSWORD: i32 = 1002;
 pub(super) const ID_REMEMBER: i32 = 1003;
 pub(super) const ID_KEEP_ORIGINAL: i32 = 1004;
-/// 显示/隐藏密码（设计 §7）。
+/// 显示/隐藏密码。
 pub(super) const ID_SHOW_PASSWORD: i32 = 1005;
 pub(super) const ICON_ID: u32 = 1;

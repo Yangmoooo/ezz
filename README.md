@@ -131,13 +131,13 @@ v2 的 `.ezz.pw` 是文本文件（在旁边可执行文件同目录，或用户
 
 ## 构建与测试
 
-普通 `cargo build` 不访问网络，也不会自动下载 7-Zip。仓库里有一个 [`justfile`](./justfile)，常用命令都可以用 `just` 调用（直接运行 `just` 会列出全部配方）：
+普通 `cargo build` 不访问网络，也不会自动下载 7-Zip。常用命令都写在 [`justfile`](./justfile) 里（直接运行 `just` 会列出全部）：
 
 ```sh
-just prepare      # 首次开发前执行一次：下载并校验固定版本的 7-Zip 引擎
+just prepare      # 下载并校验固定版本的 7-Zip 引擎，首次开发前执行一次
 just test         # 单元测试与契约测试
 just test-ignored # 需要真实 7-Zip 的端到端测试，以及 Windows 对话框测试
-just verify       # 提交前跑这个：格式、两个平台的 clippy、全部测试
+just verify       # 提交前跑这个：格式、clippy、全部测试
 ```
 
 `just prepare` 下载固定的 7zz-bin 26.02 平台资产、校验 SHA-256，并缓存到 `target/ezz-tools/26.02/`。需要代理时只对当前命令设置环境变量即可：
@@ -156,16 +156,11 @@ cargo fmt --all -- --check
 cargo test --workspace --all-targets
 cargo test --workspace --all-targets -- --ignored
 cargo clippy --workspace --all-targets -- -D warnings
+cargo clippy -p ezz --all-targets --target aarch64-apple-darwin -- -D warnings
 ```
 
-macOS 代码可以在 Windows 或 Linux 上做真实的编译与 lint 检查（只需先 `rustup target add aarch64-apple-darwin`）：
-
-```sh
-just check-mac
-# 等价于：cargo check -p ezz --all-targets --target aarch64-apple-darwin
-```
-
-只检查 `ezz` 本体：`xtask` 依赖 `xz2`（liblzma）这类 C 代码，无法在非 macOS 主机上交叉编译，它由 macOS 上的 CI 原生构建。
+最后一行检查 macOS 代码，它只需要 `rustup target add aarch64-apple-darwin`，不需要 macOS 主机。
+只检查 `ezz` 本体：`xtask` 依赖 `xz2`（liblzma）这类 C 代码，无法在非 macOS 主机上交叉编译。
 
 ### 发布物
 
@@ -180,9 +175,7 @@ just package      # 等价于 cargo xtask package
 | Windows | `ezz-windows-x64.zip` | `ezz-windows-x64/`：`ezz.exe`、`7zz.exe`、原样拷贝的 `README.md` 与 `CHANGELOG.md`、`licenses/` |
 | macOS | `ezz-macos-arm64.dmg` | 卷标 `Ezz`：`ezz.app`（内含 `7zz`、图标与 `licenses/`）、原样拷贝的 `README.md` 与 `CHANGELOG.md`、指向 `/Applications` 的符号链接 |
 
-版本只有一个来源：`Cargo.toml` 的 `package.version`。Windows 写在 exe 的 `VERSIONINFO` 里，macOS 写在 `Info.plist` 里。
-
-macOS 打包会裁剪 arm64 的 `7zz`、先生成 plist、再依次 ad-hoc 签名 `7zz` 与应用包并验证签名，最后用 `hdiutil` 生成 DMG；Windows 打包会生成包含完整运行文件、文档与许可证的 Portable ZIP。
+版本只有一个来源：`Cargo.toml` 的 `package.version`（Windows 写在 exe 的 `VERSIONINFO` 里，macOS 写在 `Info.plist` 里）。
 
 ### 发布流程
 
@@ -190,7 +183,7 @@ macOS 打包会裁剪 arm64 的 `7zz`、先生成 plist、再依次 ad-hoc 签�
 2. 同步 `Cargo.toml` 的 `package.version`，提交。
 3. 打 tag 并推送：`git tag v3.0.0 && git push origin v3.0.0`。
 
-推 tag 会触发 `.github/workflows/release.yml`：两个平台各自打包并检查产物内容（DMG 会真实挂载校验布局与签名），然后在同一个 Release 里附上 `SHA256SUMS` 和从 CHANGELOG 解析出的发行说明。CI 在每次推送到 `main` 时也会走同一条打包路径，所以发布流程不会在发布当天才第一次运行。
+推 tag 会触发 `.github/workflows/release.yml`：两个平台各自打包并检查产物内容，然后在同一个 Release 里附上 `SHA256SUMS` 和从 CHANGELOG 解析出的发行说明。
 
 ## 许可证
 

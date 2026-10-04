@@ -62,8 +62,7 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
-      # 发布物必须在两个平台上真实生成并检查内容：打包代码（尤其 macOS 的 DMG 与签名）
-      # 无法在开发机上验证，这里是唯一会执行它的地方。见设计 §11、§13。
+      # 发布物必须在两个平台上真实生成并检查内容：这里是 macOS 打包唯一的执行环境。
       - name: Package release artifact
         run: cargo xtask package
 
@@ -88,14 +87,14 @@ jobs:
           test -f "$mount/ezz.app/Contents/Resources/licenses/ezz-LICENSE.txt"
           test -f "$mount/ezz.app/Contents/Resources/licenses/unRarLicense.txt"
 
-          # 发布物名里不得出现版本号（版本只由 Info.plist 承载）。
+          # 发布物名里不得出现版本号。
           if ls target/dist | grep -Eq 'ezz-[0-9]+\.[0-9]+'; then
             echo "artifact name contains a version" >&2
             exit 1
           fi
           plutil -extract CFBundleDisplayName raw "$mount/ezz.app/Contents/Info.plist"
 
-          # 版本只有一个来源（根 Cargo.toml），Info.plist 必须与它一致。
+          # Info.plist 的版本必须与 Cargo.toml 一致。
           version="$(sed -n '/^\[package\]/,/^\[/p' Cargo.toml | grep -m1 '^version' | sed -E 's/.*"([^"]+)".*/\1/')"
           test -n "$version"
           plist_version="$(plutil -extract CFBundleShortVersionString raw "$mount/ezz.app/Contents/Info.plist")"
@@ -117,7 +116,7 @@ jobs:
           printf 'packaged artifact check\n' > "$work/in/payload.txt"
           (cd "$work/in" && "$bin/7zz" a "$work/archive.zip" payload.txt)
 
-          # 直接运行包内的二进制：引擎必须与主程序并列，否则这里会以退出码 1 结束。
+          # 直接运行包内的二进制：引擎必须与主程序并列。
           "$bin/ezz" "$work/archive.zip"
 
           test -f "$work/payload.txt"
@@ -131,7 +130,7 @@ jobs:
           set -eu
           zip=target/dist/ezz-windows-x64.zip
           test -f "$zip"
-          # 发布物名里不得出现版本号（版本只由 exe 的 VERSIONINFO 承载）。
+          # 发布物名里不得出现版本号。
           if ls target/dist | grep -Eq 'ezz-[0-9]+\.[0-9]+'; then
             echo "artifact name contains a version" >&2
             exit 1
@@ -145,7 +144,7 @@ jobs:
           test -f "$stage/CHANGELOG.md"
           test -f "$stage/licenses/ezz-LICENSE.txt"
           test -f "$stage/licenses/unRarLicense.txt"
-          # 版本只有一个来源（根 Cargo.toml），VERSIONINFO 必须与它一致。
+          # VERSIONINFO 的版本必须与 Cargo.toml 一致。
           version="$(sed -n '/^\[package\]/,/^\[/p' Cargo.toml | grep -m1 '^version' | sed -E 's/.*"([^"]+)".*/\1/')"
           test -n "$version"
 
@@ -172,7 +171,7 @@ jobs:
           printf 'packaged artifact check\n' > "$work/in/payload.txt"
           (cd "$work/in" && "$stage/7zz.exe" a "$work/archive.zip" payload.txt)
 
-          # 从解压出来的目录运行，和用户拿到 ZIP 之后的用法完全一致。
+          # 从解压出来的目录运行，和用户拿到 ZIP 之后的用法一致。
           "$stage/ezz.exe" "$(cygpath -w "$work/archive.zip")"
 
           test -f "$work/payload.txt"

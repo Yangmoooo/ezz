@@ -1,17 +1,12 @@
-/* ezz 的 Windows 资源：图标、DPI/视觉样式清单、版本信息、密码对话框（设计 §11.1、§12）。
+/* ezz 的 Windows 资源：图标、DPI/视觉样式清单、版本信息、密码对话框。
  *
- * 密码对话框用资源模板而不是在代码里摆控件：Tab 导航、Enter 提交、Esc 取消、DPI 缩放
- * 由对话框管理器提供，不需要自己处理键盘与布局（D6）。
- *
- * 版本号由 build.rs 以宏传入（`EZZ_VERSION` / `EZZ_VERSION_COMMA`），唯一来源是
- * Cargo.toml（设计 §11.2）。
+ * 版本号由 build.rs 以宏传入（`EZZ_VERSION` / `EZZ_VERSION_COMMA`），唯一来源是 Cargo.toml。
  */
 
 #include <windows.h>
 
 #define EZZ_ICON_ID              1
 #define EZZ_DIALOG_ID            101
-/* 提示与文件名在同一段文字里（设计 §7）：短名字看起来自然，长名字只从句尾省略。 */
 #define EZZ_ID_PROMPT            1001
 #define EZZ_ID_PASSWORD          1002
 #define EZZ_ID_REMEMBER          1003
@@ -36,7 +31,7 @@ BEGIN
   BEGIN
     BLOCK "040904b0"
     BEGIN
-      /* CompanyName 留空：这是个人项目，不虚构一个公司/作者身份。 */
+      /* 个人项目，不虚构公司身份。 */
       VALUE "CompanyName",      ""
       VALUE "FileDescription",  "Ezz archive extractor"
       VALUE "FileVersion",      EZZ_VERSION
@@ -58,7 +53,7 @@ STYLE DS_SETFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMEN
 CAPTION "Password required"
 FONT 9, "Segoe UI", 400, 0, 1
 BEGIN
-  /* 只有提示词，没有文件名（设计 §7）：文件名在通知与日志里，弹窗只问密码。 */
+  /* 提示词由代码在 WM_INITDIALOG 里写入。 */
   LTEXT           "", EZZ_ID_PROMPT, 8, 4, 144, 10
   EDITTEXT        EZZ_ID_PASSWORD, 8, 16, 144, 11, ES_PASSWORD | ES_AUTOHSCROLL
   /* `&` 是助记键（Win32 里用 `Alt` + 字母触发，单独敲字母不会生效）：

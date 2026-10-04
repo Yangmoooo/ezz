@@ -1,10 +1,8 @@
-//! 密码弹窗（设计 §7）：资源表里的 `DIALOGEX` + `DialogBoxParamW`。
+//! 密码弹窗：资源表里的 `DIALOGEX` + `DialogBoxParamW`。
 //!
-//! 用资源对话框而不是在代码里摆控件，是因为 Tab 导航、Enter 提交、Esc 取消、DPI 缩放
-//! 全部由对话框管理器提供（D6）—— 因此不再需要自己处理键盘消息。
+//! Tab 导航、Enter 提交、Esc 取消与 DPI 缩放都由对话框管理器提供，代码里不需要处理键盘消息。
 //!
-//! 弹窗内容刻意最小：一行提示词 + 密码框 + 三个勾选项，**不含文件名**（文件名在通知与
-//! 日志里）。`Show password` 切换密码框的遮罩字符，与 7-Zip 的做法一致。
+//! 内容是一行提示词 + 密码框 + 三个勾选项，不含文件名（它在通知与日志里）。
 
 use std::error::Error;
 use std::path::Path;
@@ -24,14 +22,13 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::PCWSTR;
 
-/// 密码长度上限（与原实现一致）。
+/// 密码长度上限。
 const PASSWORD_LIMIT: usize = 1024;
 
-/// 密码框的遮罩字符（`ES_PASSWORD` 的默认是实心圆点，这里沿用原实现的 `*`）。
+/// 密码框的遮罩字符（`ES_PASSWORD` 的默认是实心圆点）。
 const PASSWORD_MASK: u16 = b'*' as u16;
 
-/// 对话框按钮的命令 ID。取值沿用 winuser.h 的 `IDOK` / `IDCANCEL`（它们是
-/// `MESSAGEBOX_RESULT` 类型，不能直接用在控件 ID 的位置上）。
+/// 对话框按钮的命令 ID：`IDOK` / `IDCANCEL` 是 `MESSAGEBOX_RESULT`，用它的 `.0`。
 const ID_EXTRACT: u32 = IDOK.0 as u32;
 const ID_CANCEL: u32 = IDCANCEL.0 as u32;
 
@@ -561,8 +558,7 @@ mod tests {
 
     /// 模板里不得有重复的控件 ID。
     ///
-    /// 重复时 `GetDlgItem`/`SetDlgItemTextW` 只作用于其中一个，另一个（可能是空的）盖在上面
-    /// —— 这个 bug 真的发生过：提示文字被一个同 ID 的空标签遮住。
+    /// 重复时 `GetDlgItem`/`SetDlgItemTextW` 只作用于其中一个，另一个（可能是空的）会盖在上面。
     #[test]
     #[ignore = "requires an interactive desktop session"]
     fn the_template_has_no_duplicate_control_ids() {

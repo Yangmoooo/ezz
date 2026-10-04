@@ -1,7 +1,6 @@
-//! 分卷归档的识别与完整性检查（设计 §6.3）。
+//! 分卷归档的识别与完整性检查。
 //!
-//! 三个分卷家族（`.001`、`.partN.rar`、`.z01`+`.zip`）共用同一套扫描与缺号检查，只在
-//! “哪个文件属于这次输入”这一点上不同。
+//! 三个分卷家族（`.001`、`.partN.rar`、`.z01`+`.zip`）共用同一套扫描与缺号检查。
 
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
@@ -19,10 +18,9 @@ pub(super) struct ArchiveSet {
 /// 同一逻辑归档的卷：序号 → 路径（按键有序，缺号检查依赖这一点）。
 type VolumeSet = BTreeMap<u32, PathBuf>;
 
-/// 扫一遍归档所在目录，按 `sequence_of` 挑出属于同一个逻辑归档的卷（设计 §6.3）。
+/// 扫一遍归档所在目录，挑出属于同一个逻辑归档的卷。
 ///
-/// `sequence_of` 返回序号即收录该文件，返回 `None` 表示与本次输入无关。三个分卷家族
-/// （`.001`、`.partN.rar`、`.z01`+`.zip`）只在这个闭包里不同。
+/// `sequence_of` 返回序号即收录该文件，返回 `None` 表示与本次输入无关。
 fn scan_volumes(
     parent: &Path,
     mut sequence_of: impl FnMut(&Path) -> Option<u32>,
@@ -41,9 +39,9 @@ fn scan_volumes(
     Ok(volumes)
 }
 
-/// 1 到最高序号之间不得缺号：缺号是致命失败（`MissingVolume`）。
+/// 1 到最高序号之间不得缺号，缺号是致命失败。
 ///
-/// `selected` 是用户实际点中的那一卷：目录里只剩它自己时，缺号检查也必须以它为最高序号。
+/// 最高序号以 `selected`（用户点中的那一卷）为下限，目录里只剩它自己时也能通过检查。
 fn require_contiguous(
     volumes: &VolumeSet,
     selected: u32,

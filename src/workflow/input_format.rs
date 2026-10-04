@@ -1,4 +1,4 @@
-//! 输入格式探测：普通归档与 Steganographier（设计 §6.1、§6.2）。
+//! 输入格式探测：普通归档与 Steganographier。
 
 use std::ffi::OsStr;
 use std::fs;
@@ -9,7 +9,7 @@ use super::{ExtractionError, file_system_error};
 use crate::seven_zip::{ArchiveScan, SevenZip};
 
 pub(super) enum DetectedInputFormat {
-    /// 常规归档：`scan` 是探测阶段已经做过的**无密码**扫描，直接复用（R4）。
+    /// 常规归档：`scan` 是探测阶段已经做过的无密码扫描，直接复用。
     RegularArchive {
         scan: ArchiveScan,
     },
@@ -48,10 +48,7 @@ impl DetectedInputFormat {
     }
 }
 
-/// 探测输入格式：先试 Steganographier（`-t#`），再按普通归档扫描（设计 §6.2）。
-///
-/// 两个探测函数就是全部格式集合：`SevenZip` 只有一个实现，不为假设中的第三种格式保留一个
-/// trait（设计 §9：不得为假设中的扩展扩大接口）。
+/// 探测输入格式：先试 Steganographier（`-t#`），再按普通归档扫描。
 pub(super) fn detect_input_format(
     seven_zip: &SevenZip,
     input: &Path,
@@ -86,7 +83,7 @@ fn detect_steganographier(
         .map(|embedded| embedded.map(|embedded| DetectedInputFormat::Steganographier { embedded }))
 }
 
-/// 普通归档：一次无密码扫描同时决定“这是不是归档”和“要不要密码”（R4）。
+/// 普通归档：一次无密码扫描同时决定“这是不是归档”和“要不要密码”。
 fn detect_regular_archive(
     seven_zip: &SevenZip,
     input: &Path,

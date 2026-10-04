@@ -1,7 +1,4 @@
-//! 引擎定位（设计 §11）。
-//!
-//! 引擎位置的唯一来源链：`EZZ_7ZZ` 环境变量 → 与 `ezz` 可执行文件同目录（发布物的布局）。
-//! 启动时解析并校验一次，缺失就一次性明确提示，不让每个输入各报一次错。
+//! 引擎定位：`EZZ_7ZZ` 环境变量 → 与 `ezz` 可执行文件同目录。启动时解析并校验一次。
 
 use std::path::PathBuf;
 
@@ -27,10 +24,9 @@ pub enum EngineError {
     NotFound { path: PathBuf },
 }
 
-/// 解析并校验引擎路径。启动时调用一次。
+/// 解析并校验引擎路径。
 ///
-/// `EZZ_7ZZ` 一旦设置就以它为准，**不静默回退**到同目录：否则"覆盖没生效"这种问题
-/// 只会在很久以后以别的形式暴露出来。
+/// `EZZ_7ZZ` 一旦设置就以它为准，不静默回退到同目录。
 pub fn locate_engine() -> Result<PathBuf, EngineError> {
     if let Some(value) = std::env::var_os(OVERRIDE_VARIABLE) {
         let path = PathBuf::from(value);

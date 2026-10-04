@@ -25,8 +25,7 @@ pub(crate) use notifications::show_notification;
 
 /// 处理完成后退出前的让出时间（秒）。
 ///
-/// 0 表示只让出一个 run loop 回合：同一次激活里已经排队的打开事件先被派发（§3.3
-/// "处理完就退出"）。之后再到达的交付由 LaunchServices 重新启动应用处理。
+/// 0 表示只让出一个 run loop 回合，先派发同一次激活里已经排队的打开事件。
 const QUIT_AFTER: f64 = 0.0;
 
 struct AppDelegateIvars {
@@ -57,8 +56,8 @@ define_class!(
             #[allow(deprecated)]
             app.activateIgnoringOtherApps(true);
 
-            // 启动时没有待处理输入才显示选择器。被打开文件启动时，AppKit 会把
-            // `openFiles:` 送到本方法**之前**，所以有输入时不会走到这里。
+            // 启动时没有待处理输入才显示选择器：被打开文件启动时，AppKit 会把
+            // `openFiles:` 送到本方法之前。
             if self.ivars().pending.borrow().is_empty() {
                 self.ivars().picker_open.set(true);
                 let picked = select_files(self.mtm());
@@ -116,9 +115,8 @@ impl AppDelegate {
     }
 
     fn process_pending(&self) {
-        // 主线程同步执行就是串行化本身。重入守卫挡住模态对话框（密码弹窗）嵌套
-        // run loop 期间到达的打开事件：它们留在 `pending` 里，由本次批次结束后的
-        // 同一层循环取走，因此不会出现并行解压。
+        // 主线程同步执行就是串行化本身；重入守卫挡住模态对话框嵌套 run loop 期间到达的
+        // 打开事件，它们留在 `pending` 里，由本次批次结束后的同一层循环取走。
         if self.ivars().picker_open.get() || self.ivars().processing.replace(true) {
             return;
         }
@@ -159,7 +157,7 @@ impl PasswordPrompt for MacPasswordPrompt {
         let mtm = MainThreadMarker::new().expect("password prompt must run on the main thread");
         let alert = NSAlert::new(mtm);
         alert.setMessageText(ns_string!("Password required"));
-        // 弹窗里不显示文件名（§7）：它在通知与日志里，这里只问密码。见 Windows 侧的同样取舍。
+        // 弹窗里不显示文件名：它在通知与日志里。
         alert.setInformativeText(&NSString::from_str(password_prompt_message(
             previous_attempt_failed,
         )));
@@ -205,7 +203,7 @@ impl PasswordPrompt for MacPasswordPrompt {
         accessory.addSubview(&keep_original);
         alert.setAccessoryView(Some(&accessory));
 
-        // 无窗口的 accessory 应用不先激活的话，模态框可能出现在其他窗口后面（设计 §3.2）。
+        // accessory 应用不先激活的话，模态框可能出现在其他窗口后面。
         let app = NSApplication::sharedApplication(mtm);
         #[allow(deprecated)]
         app.activateIgnoringOtherApps(true);
@@ -226,11 +224,10 @@ pub fn run() -> Result<RunOutcome, Box<dyn Error>> {
     let paths = PlatformPaths::discover()?;
     initialize_logging(&paths.log_file)?;
 
-    // 通知需要用户授权（§12）：在打包成 .app 的环境里问一次，被拒绝只记录。
-    // 放在提取之前，让首次运行时的授权框先出现，不至于丢掉第一条完成通知。
+    // 通知需要用户授权：放在提取之前，让首次运行时的授权框先出现。
     notifications::request_authorization();
 
-    // 启动时解析并校验引擎（§11）：缺失时 main() 弹一次明确提示，不让每个输入各报一次。
+    // 引擎在启动时解析并校验一次：缺失时 main() 弹一次明确提示，不让每个输入各报一次。
     let workflow = ExtractionWorkflow::with_password_support(
         ezz::locate_engine()?,
         paths.password_database,

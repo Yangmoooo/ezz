@@ -1,10 +1,6 @@
-//! 路径与文件安全（设计 §5.4）。
+//! 路径与文件安全：丢弃无法在最终位置上成立的条目。
 //!
-//! 判据只服务于一个目标：解压结果在**被搬动和剥层之后**仍然站得住。逃逸或无法解析的
-//! 链接、指向结果外的链接、设备/FIFO/socket 这类特殊文件都不能进入提交集合。
-//!
-//! 这不是在纠正 7-Zip：层 1 的内容由引擎决定，这里补偿的是 ezz 自己的架构（结果会被
-//! 改名、搬家），因此只丢弃**无法在最终位置上成立**的条目（§5.5）。
+//! 逃逸或无法解析的链接、指向结果外的链接、设备/FIFO/socket 这类特殊文件都不进入提交集合。
 
 use std::ffi::OsString;
 use std::fs;
@@ -13,13 +9,11 @@ use std::time::SystemTime;
 
 use super::{ExtractionError, file_system_error};
 
-/// 丢弃不安全的条目并报告（设计 §5.4）。
+/// 丢弃不安全的条目，返回被删除条目的相对路径。
 ///
-/// 不安全条目**不得**让整个输入失败：这里删除它们并把相对路径交给调用方，由调用方记入
-/// 结构化警告。判据：
+/// 不安全条目不会让整个输入失败，调用方把它们记入结构化警告。
 ///
-/// - 符号链接：解析不到目标，或解析后离开工作目录 → 删除（无法验证的链接一律不信）。
-/// - 符号链接：目标是绝对路径 → 删除（工作目录是临时的，提交后必然是死链）。
+/// - 符号链接：解析不到目标、解析后离开工作目录、或目标是绝对路径 → 删除；
 /// - 特殊文件（设备、FIFO、socket 等）→ 删除。
 pub(super) fn discard_unsafe_entries(root: &Path) -> Result<Vec<PathBuf>, ExtractionError> {
     let canonical_root = fs::canonicalize(root)
@@ -35,10 +29,8 @@ pub(super) fn discard_unsafe_entries(root: &Path) -> Result<Vec<PathBuf>, Extrac
                 file_system_error("inspect extracted entry in", &directory, error)
             })?;
             let path = entry.path();
-            // 用 `DirEntry::file_type` 而不是 `fs::symlink_metadata`：前者在 Windows 上直接来自
-            // `read_dir` 已经拿到的属性（零系统调用），在 Unix 上通常来自 `d_type`；两者都不跟
-            // 跟踪链接，语义一致。实测（5000 个文件）：`symlink_metadata` 每条目 44.5 µs，
-            // 换成它之后剩下的只有不可省的目录遍历（8 ms）。
+            // 用 `DirEntry::file_type` 而不是 `fs::symlink_metadata`：前者直接来自 `read_dir`
+            // 已拿到的属性（Unix 上通常来自 `d_type`），不额外发起系统调用，且不跟随链接。
             let file_type = entry
                 .file_type()
                 .map_err(|error| file_system_error("inspect extracted entry", &path, error))?;
@@ -81,7 +73,7 @@ fn relative_to(root: &Path, path: &Path) -> PathBuf {
     path.strip_prefix(root).unwrap_or(path).to_path_buf()
 }
 
-/// 归档所在目录的条目快照：名称 → 修改时间（设计 §5.4）。
+/// 归档所在目录的条目快照：名称 → 修改时间。
 pub(super) type DirectorySnapshot = Vec<(OsString, Option<SystemTime>)>;
 
 pub(super) fn directory_snapshot(
@@ -108,11 +100,11 @@ pub(super) fn directory_snapshot(
     Ok(snapshot)
 }
 
-/// 逃逸不变量（设计 §5.4）：解压不得在归档所在目录留下任何新增或改动。
+/// 解压不得在归档所在目录留下任何新增或改动。
 ///
-/// 归档条目路径是否**绝对或可能逃逸**（设计 §5.4）：绝对路径、盘符前缀，或含 `..` 段。
+/// 条目路径是否绝对或可能逃逸：绝对路径、盘符前缀，或含 `..` 段。
 ///
-/// 用于报告：7-Zip 会把这类条目重写进工作目录，数据保留，但归档本身有问题。
+/// 用于报告：7-Zip 会把这类条目重写进工作目录。
 pub(crate) fn is_unsafe_archive_path(path: &str) -> bool {
     let bytes = path.as_bytes();
     path.is_empty()
@@ -129,7 +121,7 @@ pub(crate) fn is_safe_relative_path(path: &Path) -> bool {
             .all(|component| matches!(component, std::path::Component::Normal(_)))
 }
 
-/// 发现任何差异就按致命失败处理：回滚工作目录（`TempDir` 的 Drop）且不清理原归档。
+/// 发现差异即致命失败：不提交，也不清理原归档。
 pub(super) fn validate_escape_invariant(
     directory: &Path,
     ignore: &Path,
@@ -151,7 +143,7 @@ pub(super) fn validate_escape_invariant(
 mod tests {
     use super::*;
 
-    /// 逃逸不变量本身（设计 §5.4）：工作目录内的改动不算逃逸，归档所在目录的新条目算。
+    /// 工作目录内的改动不算逃逸，归档所在目录的新条目算。
     #[test]
     fn escape_invariant_detects_changes_outside_the_workspace() {
         let sandbox = tempfile::tempdir().expect("create test sandbox");

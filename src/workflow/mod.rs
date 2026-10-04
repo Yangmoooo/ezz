@@ -1,12 +1,11 @@
-//! 解压工作流：一个输入，一次完整的行为契约（设计 §5、§9）。
+//! 解压工作流：一次调用处理一个输入。
 //!
-//! 调用方（两个桌面适配器）不应了解 7-Zip 命令行、特殊中间文件、密码排序、工作目录或
-//! 目录整理细节。这个模块负责编排，细节分散在几个子模块里：
+//! 调用方不需要了解 7-Zip 命令行、中间文件、密码顺序、工作目录或目录整理。这里只做编排：
 //!
-//! - `archive_set`：分卷归档的识别与完整性检查（§6.3）；
-//! - `input_format`：普通归档与 Steganographier 的探测（§6.1、§6.2）；
-//! - `commit`：事务式提交、命名冲突、平台元数据（§5.1–§5.3）；
-//! - `safety`：不可信条目的判据、不安全条目的丢弃、逃逸不变量（§5.4）。
+//! - `archive_set`：分卷归档的识别与完整性检查；
+//! - `input_format`：普通归档与 Steganographier 的探测；
+//! - `commit`：事务式提交、命名冲突、平台元数据；
+//! - `safety`：不可信条目的判据、不安全条目的丢弃、逃逸不变量。
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -30,10 +29,7 @@ use commit::commit_output;
 use input_format::detect_input_format;
 use safety::{directory_snapshot, discard_unsafe_entries, validate_escape_invariant};
 
-/// 提取阶段连续报密码错的重试上限。
-///
-/// 这个循环只服务于混合加密归档（校验通过、提取仍报密码错）。没有上限时，一个
-/// “没有任何单一密码能解开的包”会让弹窗无限重现，用户只能靠取消退出。
+/// 提取阶段连续报密码错的重试上限：没有上限时，没有任何密码能解开的包会让弹窗无限重现。
 const MAX_PASSWORD_RETRIES: u32 = 3;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,24 +49,23 @@ pub enum ExtractionWarning {
         path: PathBuf,
         message: String,
     },
-    /// 7-Zip 以退出码 1（Warning）结束：结果已提交，但引擎报了警告（§5.1）。
+    /// 7-Zip 以退出码 1（Warning）结束：结果已提交，但引擎报了警告。
     EngineWarnings {
         message: String,
     },
-    /// 被丢弃或消毒的条目（§5.4）。
+    /// 被丢弃或消毒的条目。
     ///
-    /// `sanitized`：路径被 7-Zip 重写进工作目录的条目（`..`、绝对路径、盘符），
-    /// 以及被降级成普通文件的危险链接 —— 数据保留，但归档本身有问题。
+    /// `sanitized`：路径被 7-Zip 重写进工作目录的条目，以及被降级成普通文件的危险链接。
     /// `discarded`：没有进入提交结果的条目（逃逸或无法解析的链接、特殊文件）。
     UnsafeEntriesSkipped {
         discarded: Vec<PathBuf>,
         sanitized: Vec<String>,
     },
-    /// 剔除平台元数据后没有任何有效内容：提交的是一个空目录（§5.1 门 3）。
+    /// 剔除平台元数据后没有任何有效内容：提交的是一个空目录。
     EmptyAfterMetadataRemoval {
         removed: Vec<String>,
     },
-    /// 引擎报告数据损坏的条目：**只报告，不修改**——7-Zip 写出的内容照旧提交（§5.5 层 1）。
+    /// 引擎报告数据损坏的条目：只报告，7-Zip 写出的内容照旧提交。
     FailedEntries {
         entries: Vec<String>,
     },
@@ -136,10 +131,9 @@ pub enum ExtractionError {
 }
 
 impl ExtractionError {
-    /// 通知里用的**短分类**（设计 §3.2）。
+    /// 通知里用的短分类。
     ///
-    /// 通知不贴引擎原文：它可能很长、会被系统截断，而截断后的片段既看不懂也不完整。
-    /// 完整内容（含输入路径与每条警告）都在日志里，通知只说类型并指向日志。
+    /// 通知不贴引擎原文（可能很长、会被系统截断），完整内容在日志里。
     pub fn summary(&self) -> &'static str {
         match self {
             Self::InputNotFound(_) => "Input file not found",
@@ -205,9 +199,6 @@ impl ExtractionWorkflow {
     }
 
     /// 测试装配点：任意组合三个協作者，未给出的项用生产默认值。
-    ///
-    /// 生产代码只有 `new`（不支持密码）和 `with_password_support` 两个构造函数；测试需要
-    /// 替换協作者才能观察行为，但那些组合不该长在结构体的接口上（§9）。
     #[cfg(test)]
     fn from_parts(parts: WorkflowParts) -> Self {
         Self {
@@ -256,8 +247,7 @@ impl ExtractionWorkflow {
         let prepared = workspace.path().join("prepared");
         let (archive_input, detected_scan) = input_format.prepare(&seven_zip, input, &prepared)?;
 
-        // 探测阶段已经为同一个文件做过无密码扫描（R4）；只有特殊格式（扫描发生在刚
-        // 释放出的内嵌归档上）才需要补一次。这一次扫描同时完成了条目路径校验。
+        // 只有特殊格式才需要补一次扫描（它的前置扫描发生在刚释放出的内嵌归档上）。
         let scan = match detected_scan {
             Some(scan) => scan,
             None => seven_zip.scan(&archive_input, "")?,
@@ -265,15 +255,14 @@ impl ExtractionWorkflow {
         let mut password =
             self.resolve_password(&seven_zip, &archive_input, &scan, &selected_input)?;
 
-        // 逃逸不变量（§5.4）：解压前后比较归档所在目录的条目快照。工作目录本身已经存在，
-        // 快照时把它排除掉，否则它自己的修改时间会被当成逃逸。不依赖对 7-Zip 消毒规则的信任。
+        // 解压前后比较归档所在目录的条目快照；排除工作目录本身，否则它自己的改动会被当成逃逸。
         let snapshot = directory_snapshot(parent, workspace.path())?;
 
         let mut retries = 0;
         let verdict = loop {
             match seven_zip.extract(&archive_input, &extracted, &password.value) {
                 Ok(verdict) => break verdict,
-                // 校验阶段通过而提取仍报密码错（混合加密归档）：归一化为密码错误并重新弹窗（D2/R4）。
+                // 混合加密归档：归一化为密码错误并重新弹窗。
                 Err(ExtractionError::WrongPassword) => {
                     retries += 1;
                     if retries > MAX_PASSWORD_RETRIES {
@@ -346,10 +335,10 @@ impl ExtractionWorkflow {
         })
     }
 
-    /// 决定本次要用哪个密码（§5.1 第 5 步）。
+    /// 决定本次要用哪个密码。
     ///
-    /// 校验必须最小化（R4）：`scan` 已经判定不需要密码时**不得校验**；需要校验时，表头
-    /// 加密用一次列表（只解表头），内容加密只用最小条目测试（只解一个条目）。
+    /// 校验最小化：`scan` 判定不需要密码时不校验；需要校验时，表头加密用一次列表（只解表头），
+    /// 内容加密只用采样条目测试。
     fn resolve_password(
         &self,
         seven_zip: &SevenZip,
@@ -362,7 +351,7 @@ impl ExtractionWorkflow {
         }
 
         if let Some(store) = &self.password_store {
-            // 读取失败不会让输入失败：`candidates` 内部已记录警告并回退为空候选（§7）。
+            // 读取失败不会让输入失败：`candidates` 已记录警告并回退为空候选。
             for password in store.candidates() {
                 if validate_password(seven_zip, archive_input, scan, &password)? {
                     return Ok(ResolvedPassword {
@@ -408,11 +397,11 @@ impl ExtractionWorkflow {
     }
 }
 
-/// 最小化密码校验（R4/D2）。返回 `Ok(false)` 表示密码不对。
+/// 最小化密码校验。返回 `Ok(false)` 表示密码不对。
 ///
-/// - 表头加密：用一次列表验证（只解表头），顺带完成“拿到密码才能看见”的条目路径校验。
-/// - 内容加密：只测试采样条目（只解一个条目），不跑整包 `t`。
-/// - 没有可用样本（空归档）：无法最小化校验，交给提取阶段判定，由重试循环兜底。
+/// - 表头加密：用一次列表验证（只解表头）；
+/// - 内容加密：只测试采样条目，不跑整包 `t`；
+/// - 没有可用样本（空归档）：交给提取阶段判定，由重试循环兜底。
 fn validate_password(
     seven_zip: &SevenZip,
     archive_input: &Path,
@@ -494,7 +483,7 @@ struct TrashCleaner;
 impl SourceCleaner for TrashCleaner {
     fn clean(&self, sources: &[PathBuf]) -> Result<(), String> {
         trash::delete_all(sources).map_err(|error| error.to_string())?;
-        // 移入回收站不会自动触发 shell 变更通知，否则目录里的图标会残留到手动刷新（§11.1）。
+        // 移入回收站不触发 shell 变更通知，不刷新会导致目录里的图标残留。
         crate::explorer::refresh_parents(sources);
         Ok(())
     }
