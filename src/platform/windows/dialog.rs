@@ -235,8 +235,18 @@ fn password_text(window: HWND) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, PoisonError};
     use std::time::{Duration, Instant};
     use windows::Win32::UI::WindowsAndMessaging::FindWindowW;
+
+    /// 这三个用例都要驱动*同一个*标题的模态对话框，而 `FindWindowW` 会找到进程里的任意一个。
+    /// 测试默认并行运行，所以必须自己串行化（否则会去操纵别的用例的窗口）。
+    static SERIAL: Mutex<()> = Mutex::new(());
+
+    fn serial() -> std::sync::MutexGuard<'static, ()> {
+        // 一个用例失败会让锁中毒，但后续用例依然应该能跑。
+        SERIAL.lock().unwrap_or_else(PoisonError::into_inner)
+    }
 
     /// 文案随“上一次失败”变化（设计 §7）：不复现弹窗也能验证。
     #[test]
@@ -314,6 +324,7 @@ mod tests {
     #[test]
     #[ignore = "requires an interactive desktop session"]
     fn extract_returns_the_typed_password_and_the_checkbox_states() {
+        let _serial = serial();
         super::super::initialize_process().expect("initialize process");
 
         let driver =
@@ -331,6 +342,7 @@ mod tests {
     #[test]
     #[ignore = "requires an interactive desktop session"]
     fn checkbox_defaults_are_remember_yes_and_keep_original_no() {
+        let _serial = serial();
         super::super::initialize_process().expect("initialize process");
 
         // 完全不碰勾选框，直接按“Extract”：验证 `WM_INITDIALOG` 里的默认值。
@@ -348,6 +360,7 @@ mod tests {
     #[test]
     #[ignore = "requires an interactive desktop session"]
     fn cancel_returns_no_response() {
+        let _serial = serial();
         super::super::initialize_process().expect("initialize process");
 
         let driver = std::thread::spawn(|| drive_dialog("", ID_CANCEL, None, None));
