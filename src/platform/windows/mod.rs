@@ -86,7 +86,7 @@ pub fn run() -> Result<RunOutcome, Box<dyn Error>> {
 pub fn show_fatal_error(message: &str) {
     // 这个函数在启动失败之后被调用，所以只用不需要任何初始化就能工作的 API。
     let text = wide(message);
-    let caption = wide("ezz could not start");
+    let caption = wide("Ezz could not start");
     // SAFETY: 两个缓冲区都以 NUL 结尾，并且在调用期间存活。
     unsafe {
         MessageBoxW(

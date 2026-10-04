@@ -1,6 +1,6 @@
-# ezz
+# Ezz
 
-ezz 是一个无主窗口的桌面解压工具。它从 Finder 或 Windows 资源管理器接收文件，使用随应用发布的固定版本 7-Zip，依次完成格式识别、密码尝试、事务式解压、目录整理和原归档清理。
+Ezz 是一个无主窗口的桌面解压工具。它从 Finder 或 Windows 资源管理器接收文件，使用随应用发布的固定版本 7-Zip，依次完成格式识别、密码尝试、事务式解压、目录整理和原归档清理。
 
 v3 不提供命令行接口、主窗口、任务列表或持久化设置。
 
@@ -44,14 +44,14 @@ xattr -dr com.apple.quarantine /Applications/ezz.app
 2. 保持 `ezz.exe` 与 `7zz.exe` 位于同一目录。
 3. 用 `ezz.exe` 打开归档，或直接启动 `ezz.exe` 后选择文件。
 
-ezz 不提供安装器，也不会修改注册表或抢占默认文件关联。需要右键菜单时，可自行使用 [Custom Context Menu](https://github.com/ikas-mc/ContextMenuForWindows11) 等工具；仓库里的 [`assets/用 ezz 提取.json`](./assets/用%20ezz%20提取.json) 是一份可直接导入的配置，导入前请把其中的 `exe` 与 `icon` 路径改成你解压后的 `ezz.exe`。
+Ezz 不提供安装器，也不会修改注册表或抢占默认文件关联。需要右键菜单时，可自行使用 [Custom Context Menu](https://github.com/ikas-mc/ContextMenuForWindows11) 等工具；仓库里的 [`assets/用 ezz 提取.json`](./assets/用%20ezz%20提取.json) 是一份可直接导入的配置，导入前请把其中的 `exe` 与 `icon` 路径改成你解压后的 `ezz.exe`。
 
-导入时建议把 `acceptMultipleFilesFlag` 设为 `1`（即一次把选中的全部路径交给同一个 ezz 进程）。保持 `0` 时每个文件会各起一个进程，只有第一个能提取，其余的会被跳过并各自弹出一条通知——需要重新提取一次。
+导入时建议把 `acceptMultipleFilesFlag` 设为 `1`（即一次把选中的全部路径交给同一个 Ezz 进程）。保持 `0` 时每个文件会各起一个进程，只有第一个能提取，其余的会被跳过并各自弹出一条通知——需要重新提取一次。
 
 ## 使用方式
 
-- 在 Finder 或 Windows 资源管理器中选择文件并用 ezz 打开。
-- 直接启动 ezz 时会显示允许多选、允许选择任意文件的系统文件选择器。
+- 在 Finder 或 Windows 资源管理器中选择文件并用 Ezz 打开。
+- 直接启动 Ezz 时会显示允许多选、允许选择任意文件的系统文件选择器。
 - macOS 注册常见压缩扩展名以及 Steganographier 的 `mp4`、`mkv`；未注册或修改过后缀的文件请通过文件选择器打开。
 - 每个文件处理完成后都会显示一条通知并报告最终路径（含警告数量）；全部完成后程序退出，不会常驻后台。
 
@@ -82,7 +82,7 @@ ezz 不提供安装器，也不会修改注册表或抢占默认文件关联。�
 
 ## 数据位置
 
-ezz 没有设置文件。密码库与日志放在同一个应用数据目录：
+Ezz 没有设置文件。密码库与日志放在同一个应用数据目录：
 
 | 数据 | macOS | Windows |
 | --- | --- | --- |
@@ -105,7 +105,7 @@ ezz 没有设置文件。密码库与日志放在同一个应用数据目录：
 
 - `passwords` 的元素可以是字符串（等价于 `uses` 与 `last_used` 为 0），也可以是对象。
 - `version` 缺失时按 `1` 处理；`uses` 与 `last_used` 缺失时按 `0` 处理；未知字段忽略。手工编辑后无需保持排序。
-- 文件读不出来时 ezz 会忽略它并继续允许手动输入密码，不会让提取失败；下一次成功保存前会把原文件改名为 `passwords.json.corrupt-<时间戳>` 保留。
+- 文件读不出来时 Ezz 会忽略它并继续允许手动输入密码，不会让提取失败；下一次成功保存前会把原文件改名为 `passwords.json.corrupt-<时间戳>` 保留。
 
 ### 从 v2 迁移密码
 
@@ -164,6 +164,6 @@ cargo xtask package
 
 ## 许可证
 
-ezz 使用 LGPL-2.1-or-later。发布物同时包含 7-Zip、unRAR 相关许可证原文；详情见 [`assets/7zip`](./assets/7zip)。
+Ezz 使用 LGPL-2.1-or-later。发布物同时包含 7-Zip、unRAR 相关许可证原文；详情见 [`assets/7zip`](./assets/7zip)。
 
 感谢 [7-Zip](https://7-zip.org/) 提供解压引擎，以及 [Steganographier](https://github.com/cenglin123/SteganographierGUI) 对特殊视频封装格式的探索。

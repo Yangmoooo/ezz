@@ -50,7 +50,7 @@ pub fn initialize_logging(path: &std::path::Path) -> Result<(), Box<dyn Error>> 
     fs::create_dir_all(parent)?;
     let file = OpenOptions::new().create(true).append(true).open(path)?;
     WriteLogger::init(LevelFilter::Info, log_config(), file)?;
-    info!("ezz {} started", env!("CARGO_PKG_VERSION"));
+    info!("Ezz {} started", env!("CARGO_PKG_VERSION"));
     Ok(())
 }
 
@@ -122,16 +122,16 @@ fn failure_body(name: &str, error: &ExtractionError) -> String {
 pub fn report_skipped(inputs: &[PathBuf]) {
     // 无参数启动时没有可点名的输入：只说"已经在运行"。
     if inputs.is_empty() {
-        warn!("skipped this launch: another ezz instance is already running");
+        warn!("skipped this launch: another Ezz instance is already running");
         super::show_notification(
             "Already running",
-            "Another ezz is already running. Please try again later.",
+            "Another Ezz is already running. Please try again later.",
         );
         return;
     }
 
     warn!(
-        "skipped {} input(s): another ezz instance is already running",
+        "skipped {} input(s): another Ezz instance is already running",
         inputs.len()
     );
     for input in inputs {
@@ -144,7 +144,7 @@ pub fn report_skipped(inputs: &[PathBuf]) {
         .map(|input| input.display().to_string())
         .collect::<Vec<_>>()
         .join("\n");
-    let mut body = format!("Another ezz is already running:\n{listed}");
+    let mut body = format!("Another Ezz is already running:\n{listed}");
     if inputs.len() > MAX_REPORTED_INPUTS {
         body.push_str(&format!(
             "\n(and {} more)",

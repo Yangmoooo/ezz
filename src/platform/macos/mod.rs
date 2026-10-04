@@ -237,7 +237,7 @@ pub fn run() -> Result<RunOutcome, Box<dyn Error>> {
         MacPasswordPrompt,
     );
 
-    let mtm = MainThreadMarker::new().ok_or("ezz must start on the main thread")?;
+    let mtm = MainThreadMarker::new().ok_or("Ezz must start on the main thread")?;
     let app = NSApplication::sharedApplication(mtm);
     let delegate = AppDelegate::new(mtm, workflow);
     app.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
@@ -258,7 +258,7 @@ pub fn show_fatal_error(message: &str) {
     #[allow(deprecated)]
     app.activateIgnoringOtherApps(true);
     let alert = NSAlert::new(mtm);
-    alert.setMessageText(ns_string!("ezz could not start"));
+    alert.setMessageText(ns_string!("Ezz could not start"));
     alert.setInformativeText(&NSString::from_str(message));
     alert.addButtonWithTitle(ns_string!("OK"));
     alert.runModal();

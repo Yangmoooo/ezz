@@ -36,13 +36,14 @@ BEGIN
   BEGIN
     BLOCK "040904b0"
     BEGIN
-      VALUE "CompanyName",      "ezz"
-      VALUE "FileDescription",  "ezz archive extractor"
+      /* CompanyName 留空：这是个人项目，不虚构一个公司/作者身份。 */
+      VALUE "CompanyName",      ""
+      VALUE "FileDescription",  "Ezz archive extractor"
       VALUE "FileVersion",      EZZ_VERSION
       VALUE "InternalName",     "ezz"
       VALUE "LegalCopyright",   "LGPL-2.1-or-later"
       VALUE "OriginalFilename", "ezz.exe"
-      VALUE "ProductName",      "ezz"
+      VALUE "ProductName",      "Ezz"
       VALUE "ProductVersion",   EZZ_VERSION
     END
   END

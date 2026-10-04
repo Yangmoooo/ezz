@@ -16,7 +16,7 @@ pub const ENGINE_FILE_NAME: &str = "7zz";
 
 #[derive(Debug, thiserror::Error)]
 pub enum EngineError {
-    #[error("could not locate the ezz executable: {0}")]
+    #[error("could not locate the Ezz executable: {0}")]
     ExecutableLocation(String),
     #[error("EZZ_7ZZ points to a path that is not a file: {path}", path = .path.display())]
     OverrideNotAFile { path: PathBuf },

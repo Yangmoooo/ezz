@@ -20,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Cargo 包名、程序名和显示名统一为 `ezz`，版本升级为 3.0.0
+- Cargo 包名与程序名保持小写 `ezz`，对外的显示名统一为 `Ezz`，版本升级为 3.0.0
 - 普通归档改为按内容探测，不再依赖扩展名判断是否支持
 - 原归档只在完整结果提交后移入系统废纸篓或回收站，清理失败不再使解压结果失败
 - 密码库和日志迁移到平台标准用户数据目录，且不自动读取或迁移 v2 数据

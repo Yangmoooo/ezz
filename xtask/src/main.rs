@@ -80,7 +80,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
         Some(command) if command == OsStr::new("package") => {
             let artifact = package()?;
-            println!("Packaged ezz at {}", artifact.display());
+            println!("Packaged Ezz at {}", artifact.display());
             Ok(())
         }
         _ => Err("usage: cargo xtask <prepare|package>".into()),
@@ -233,7 +233,7 @@ fn write_macos_plist(path: &Path, version: &str) -> Result<(), Box<dyn Error>> {
         "CFBundleDevelopmentRegion".into(),
         Value::String("en".into()),
     );
-    plist.insert("CFBundleDisplayName".into(), Value::String("ezz".into()));
+    plist.insert("CFBundleDisplayName".into(), Value::String("Ezz".into()));
     plist.insert(
         "CFBundleDocumentTypes".into(),
         Value::Array(vec![Value::Dictionary(document_type)]),
@@ -248,7 +248,7 @@ fn write_macos_plist(path: &Path, version: &str) -> Result<(), Box<dyn Error>> {
         "CFBundleInfoDictionaryVersion".into(),
         Value::String("6.0".into()),
     );
-    plist.insert("CFBundleName".into(), Value::String("ezz".into()));
+    plist.insert("CFBundleName".into(), Value::String("Ezz".into()));
     plist.insert("CFBundlePackageType".into(), Value::String("APPL".into()));
     plist.insert(
         "CFBundleShortVersionString".into(),
