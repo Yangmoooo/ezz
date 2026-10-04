@@ -29,9 +29,6 @@ objc2-foundation = "0.3.2"
 objc2-user-notifications = { version = "0.3.2", features = ["block2"] }
 block2 = "0.6"
 
-# 每个平台只用一个原生绑定生态（设计 §12）：这里只有 `windows` crate，没有第三方窗口、
-# 对话框或通知包装库。`trash` 是明确保留的例外（它的底层就是 IFileOperation 与
-# NSFileManager，手写的收益最小而风险最高）。
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.62", features = [
     "Win32_Foundation",
