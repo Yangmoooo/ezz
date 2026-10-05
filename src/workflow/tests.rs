@@ -370,7 +370,7 @@ fn platform_metadata_does_not_change_the_top_level_layout() {
 #[cfg(unix)]
 #[test]
 #[ignore = "requires cargo xtask prepare"]
-fn symbolic_link_that_escapes_the_result_is_discarded_and_reported() {
+fn symbolic_link_that_escapes_the_result_is_sanitized_and_reported() {
     use std::os::unix::fs::symlink;
 
     let seven_zip = prepared_seven_zip();
@@ -382,7 +382,13 @@ fn symbolic_link_that_escapes_the_result_is_discarded_and_reported() {
     let sandbox = tempfile::tempdir().expect("create test sandbox");
     let link = sandbox.path().join("escape");
     let archive = sandbox.path().join("archive.7z");
-    symlink("../outside", &link).expect("create escaping symlink");
+    let outside_name = format!("ezz-escape-outside-{}", std::process::id());
+    let outside = sandbox
+        .path()
+        .parent()
+        .expect("sandbox parent")
+        .join(&outside_name);
+    symlink(format!("../{outside_name}"), &link).expect("create escaping symlink");
     create_archive(&seven_zip, sandbox.path(), &archive, &["escape"]);
     std::fs::remove_file(&link).expect("remove source symlink");
 
@@ -401,32 +407,21 @@ fn symbolic_link_that_escapes_the_result_is_discarded_and_reported() {
             } => Some((discarded, sanitized)),
             _ => None,
         })
-        .expect("the discarded entry must be reported");
-    // 丢弃清单与消毒清单的类型不同（路径 vs 字符串）：分开断言，不硬拼成一个迭代器。
-    let discarded_named = reported
-        .0
-        .iter()
-        .any(|entry| entry.to_string_lossy().contains("escape"));
-    let sanitized_named = reported.1.iter().any(|entry| entry.contains("escape"));
+        .expect("the sanitized entry must be reported");
+    // 薄封装：引擎留下的占位普通文件照常提交，只登记为“消毒”。
     assert!(
-        discarded_named || sanitized_named,
-        "the escaping entry must be named in the report: {reported:?}"
+        reported.1.iter().any(|entry| entry.contains("escape")),
+        "the escaping entry must be reported as sanitized: {reported:?}"
     );
-
-    // 提交结果里不得留下逃逸链接（要么没有，要么不再是链接）。
-    let committed = outcome.output.join("escape");
-    if committed.exists() {
-        assert!(
-            !std::fs::symlink_metadata(&committed)
-                .expect("inspect committed entry")
-                .file_type()
-                .is_symlink(),
-            "an escaping link must not be committed as a link"
-        );
-    }
+    let committed =
+        std::fs::symlink_metadata(&outcome.output).expect("the sanitized entry must be committed");
     assert!(
-        std::fs::symlink_metadata(&link).is_err(),
-        "unsafe output must not be committed outside the result"
+        committed.file_type().is_file(),
+        "the committed entry must be a regular file, not a link"
+    );
+    assert!(
+        std::fs::symlink_metadata(&outside).is_err(),
+        "the escaping link must not create anything outside the result"
     );
 }
 
