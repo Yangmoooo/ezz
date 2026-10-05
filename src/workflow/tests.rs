@@ -1,7 +1,4 @@
-//! 工作流级测试：真实引擎 + 真实文件系统。
-//!
-//! 每个用例都从 `ExtractionWorkflow::extract` 进入，只断言可观察结果；纯函数与单模块的用例
-//! 留在各自模块里。
+//! 工作流级测试：真实引擎 + 真实文件系统，只从 `ExtractionWorkflow::extract` 进入。
 
 use std::collections::VecDeque;
 use std::io::Write;
@@ -55,7 +52,7 @@ impl PasswordPrompt for NoResponsePrompt {
     }
 }
 
-/// 大多数用例只需要替换清理器：`RemoveSource` 直接删文件（不发回收站），也不弹密码。
+/// 替换清理器：`RemoveSource` 直接删文件（不进回收站），也不弹密码。
 fn workflow(seven_zip: impl Into<PathBuf>) -> ExtractionWorkflow {
     workflow_with_cleaner(seven_zip, RemoveSource)
 }
@@ -392,7 +389,6 @@ fn symbolic_link_that_escapes_the_result_is_sanitized_and_reported() {
     create_archive(&seven_zip, sandbox.path(), &archive, &["escape"]);
     std::fs::remove_file(&link).expect("remove source symlink");
 
-    // 不安全条目不得否决整个输入。
     let outcome = workflow(&seven_zip)
         .extract(&archive)
         .expect("an escaping link must not fail the whole input");
@@ -408,7 +404,7 @@ fn symbolic_link_that_escapes_the_result_is_sanitized_and_reported() {
             _ => None,
         })
         .expect("the sanitized entry must be reported");
-    // 薄封装：引擎留下的占位普通文件照常提交，只登记为“消毒”。
+    // 引擎留下的占位普通文件照常提交，只登记为“消毒”。
     assert!(
         reported.1.iter().any(|entry| entry.contains("escape")),
         "the escaping entry must be reported as sanitized: {reported:?}"
@@ -1068,7 +1064,6 @@ fn symbolic_link_entries_do_not_fail_the_input() {
     }
 }
 
-/// 剔除平台元数据后没有内容：降级成功 + 报告。
 #[test]
 #[ignore = "requires cargo xtask prepare"]
 fn archive_with_only_platform_metadata_is_a_reported_degraded_success() {
@@ -1111,7 +1106,6 @@ fn archive_with_only_platform_metadata_is_a_reported_degraded_success() {
     );
 }
 
-/// 手写一个最小 tar：`zip` crate 会把反斜杠改写成下划线，所以盘符前缀条目只能这样造。
 fn write_tar(path: &Path, entries: &[(&str, &[u8])]) {
     let mut bytes = Vec::new();
     for (name, data) in entries {
@@ -1134,10 +1128,10 @@ fn write_tar(path: &Path, entries: &[(&str, &[u8])]) {
     std::fs::write(path, &bytes).expect("write tar");
 }
 
-/// 盘符前缀条目（`C:\drive.txt`）：7-Zip 读取时把它改写成 `C:_drive.txt`，提取时再把
-/// 非法字符换成 `_`。数据必须保留且必须报告。
+/// 盘符前缀条目（`C:\drive.txt`）：7-Zip 读取时把它改写成 `C:_drive.txt`，提取时再把非法
+/// 字符换成 `_`。
 ///
-/// 用 tar 而不是 zip：`zip` crate 会在写入时就把反斜杠换成下划线，造不出真的盘符条目。
+/// 手写 tar 而不是 zip：`zip` crate 会在写入时就把反斜杠换成下划线，造不出真的盘符条目。
 #[test]
 #[ignore = "requires cargo xtask prepare"]
 fn drive_prefixed_entries_are_sanitized_and_reported() {
@@ -1171,7 +1165,7 @@ fn drive_prefixed_entries_are_sanitized_and_reported() {
         "the entry must be named in the report: {sanitized:?}"
     );
 
-    // 数据不得丢失：必须落在结果内（名字会被消毒成合法文件名）。
+    // 数据不得丢失：必须落在结果内。
     assert!(outcome.output.is_dir(), "{:?}", outcome.output);
     let mut found_payload = false;
     for entry in std::fs::read_dir(&outcome.output).expect("read result") {
@@ -1245,7 +1239,6 @@ fn corrupt_last_entry_byte(bytes: &mut [u8]) {
     bytes[directory_offset - 1] ^= 0xFF;
 }
 
-/// 单个条目损坏 → 降级成功：其余条目照常提交，损坏条目也照旧提交，只点名报告。
 #[test]
 #[ignore = "requires cargo xtask prepare"]
 fn a_corrupted_entry_is_committed_and_reported_while_the_rest_is_kept() {
@@ -1370,7 +1363,7 @@ fn special_files_are_discarded_and_reported() {
     assert!(!fifo.exists(), "the FIFO must be removed");
 }
 
-/// 硬链接不可跨越文件系统，因此它不会变成逃逸向量；归档里的硬链接必须当普通文件处理。
+/// 硬链接不可跨越文件系统，归档里的硬链接必须当普通文件处理。
 #[test]
 #[ignore = "requires cargo xtask prepare"]
 fn hard_links_are_extracted_as_regular_files() {

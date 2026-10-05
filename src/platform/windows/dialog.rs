@@ -269,8 +269,7 @@ mod tests {
     };
     use windows::core::BOOL;
 
-    /// 这些用例都要驱动*同一个*标题的模态对话框，而 `FindWindowW` 会找到进程里的任意一个。
-    /// 测试默认并行运行，所以必须自己串行化（否则会去操纵别的用例的窗口）。
+    /// `FindWindowW` 会找到进程里任意一个同名窗口，所以这些用例必须串行。
     static SERIAL: Mutex<()> = Mutex::new(());
 
     fn serial() -> std::sync::MutexGuard<'static, ()> {
@@ -278,7 +277,7 @@ mod tests {
         SERIAL.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// 提示词由 `common` 提供（那里有用例）；这里只做一次安全检查。
+    /// 提示词在 `common` 里有用例；这里只做一次安全检查。
     #[test]
     fn prompt_message_is_never_empty() {
         for failed in [false, true] {
@@ -288,10 +287,8 @@ mod tests {
         }
     }
 
-    /// 等对话框出现**且控件已经建好**：`show` 在另一个线程里创建它，这里轮询。
-    ///
-    /// 只等标题不够：`FindWindowW` 连刚创建、`WM_INITDIALOG` 还没跑完的窗口也能找到，
-    /// 那种窗口一个子控件都没有（枚举会得到 0 个）。
+    /// 等对话框出现**且控件已建好**：`FindWindowW` 连 `WM_INITDIALOG` 还没跑完的窗口也能
+    /// 找到，那种窗口一个子控件都没有。
     fn wait_for_dialog() -> HWND {
         let title = super::super::wide("Password required");
         let deadline = Instant::now() + Duration::from_secs(10);
@@ -309,9 +306,6 @@ mod tests {
     }
 
     /// 在同一个进程里驱动对话框：写文本、拨勾选框（`None` 表示不碰）、按按钮。
-    ///
-    /// 这些用例验证的是“控件 ID 与资源模板接对了”：拿不到 GUI 时靠手动清单，
-    /// 这是能自动化的那部分。运行方式：`cargo test --bin ezz -- --ignored`。
     fn drive_dialog(
         password: &str,
         button: u32,
@@ -411,7 +405,6 @@ mod tests {
         true.into()
     }
 
-    /// 弹窗只问密码：提示词是一行固定文案，不含文件名。
     #[test]
     #[ignore = "requires an interactive desktop session"]
     fn the_prompt_is_a_single_line_without_the_filename() {
@@ -421,8 +414,7 @@ mod tests {
         let driver = std::thread::spawn(|| {
             let window = wait_for_dialog();
             let shown = prompt_text_of(window);
-            // 先把对话框关掉，再把观察结果带回去：若先断言，失败会让主线程永远卡在模态
-            // 循环里（driver 线程已经死了，没人再关窗口）。
+            // 先关掉对话框再断言：若先断言，失败会让主线程永远卡在模态循环里。
             drive_dialog("", ID_CANCEL, None, None);
             shown
         });
@@ -432,7 +424,6 @@ mod tests {
         assert_eq!(shown, "Enter the password:");
     }
 
-    /// `Show password` 切换遮罩字符：默认隐藏，勾上显示明文，取消后回到隐藏。
     #[test]
     #[ignore = "requires an interactive desktop session"]
     fn show_password_toggles_the_mask_character() {
@@ -470,10 +461,8 @@ mod tests {
         true.into()
     }
 
-    /// 三个勾选项必须有互不冲突的助记键（`Alt` + 字母）；OK / Cancel 必须没有。
-    ///
-    /// Win32 的助记键是 `Alt` + 字母，文字里的 `&` 会被画成下划线；单独的字母不会生效
-    /// （焦点在密码框时字母是要输入的密码）。OK / Cancel 靠 Enter / Esc，不需要助记键。
+    /// 三个勾选项要有互不冲突的助记键（`Alt` + 字母），OK / Cancel 不要：`Alt` 组合才会
+    /// 触发，单独敲字母是在往密码框里输入。
     #[test]
     #[ignore = "requires an interactive desktop session"]
     fn checkbox_labels_have_unique_mnemonics() {
@@ -555,9 +544,8 @@ mod tests {
         }
     }
 
-    /// 模板里不得有重复的控件 ID。
-    ///
-    /// 重复时 `GetDlgItem`/`SetDlgItemTextW` 只作用于其中一个，另一个（可能是空的）会盖在上面。
+    /// 重复的控件 ID 会让 `GetDlgItem`/`SetDlgItemTextW` 只作用于其中一个，另一个（可能是
+    /// 空的）盖在上面。
     #[test]
     #[ignore = "requires an interactive desktop session"]
     fn the_template_has_no_duplicate_control_ids() {

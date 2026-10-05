@@ -1,6 +1,6 @@
 //! 真实 `ezz` 二进制的契约测试：全局互斥体、退出码、多输入循环。
 //!
-//! 只在 Windows 上跑：macOS 的输入只走 Apple Event，直接运行 bundle 内的二进制不是产品路径。
+//! 只在 Windows 上跑：macOS 的输入只走 Apple Event。
 //!
 //! 注意：真实二进制会把原归档送进回收站。
 
@@ -14,8 +14,7 @@ use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_ABANDONED, WAIT_OBJEC
 use windows::Win32::System::Threading::{CreateMutexW, ReleaseMutex, WaitForSingleObject};
 use windows::core::PCWSTR;
 
-/// 与 `src/platform/windows.rs` 里的名字一致。这里故意写死字面量：如果实现改了名字，
-/// 这些用例就会失败（而不是悄悄失去意义）。
+/// 故意写死字面量：实现改了名字，这些用例就该失败。
 const EXTRACT_MUTEX: &str = "Local\\io.github.yangmoooo.ezz.extract";
 
 /// 这些用例必须串行：其中一个会按住全局互斥体，别的用例一旦并发就会被"已跳过"。
@@ -35,10 +34,7 @@ fn prepared_seven_zip() -> PathBuf {
         .join("7zz.exe")
 }
 
-/// 造一个只含单个顶层文件的归档。
-///
-/// 源文件放在 `source/` 子目录里，这样提取出来的结果（落在归档旁）与夹具不会同名，
-/// 断言“没有产生输出”才真正有意义。
+/// 造一个只含单个顶层文件的归档；源文件放在 `source/` 里，提取结果不会与它同名。
 fn create_archive(engine: &Path, directory: &Path, name: &str) -> PathBuf {
     let source = directory.join("source");
     std::fs::create_dir_all(&source).expect("create source directory");
