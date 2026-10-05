@@ -151,7 +151,7 @@ fn package_macos(seven_zip: &Path) -> Result<PathBuf, Box<dyn Error>> {
         fs::remove_dir_all(&stage)?;
     }
 
-    let app = stage.join("ezz.app");
+    let app = stage.join("Ezz.app");
     let contents = app.join("Contents");
     let binaries = contents.join("MacOS");
     let resources = contents.join("Resources");
@@ -190,13 +190,13 @@ fn package_macos(seven_zip: &Path) -> Result<PathBuf, Box<dyn Error>> {
         Command::new("codesign")
             .args(["--force", "--sign", "-", "--timestamp=none"])
             .arg(&app),
-        "sign ezz.app",
+        "sign Ezz.app",
     )?;
     run_command(
         Command::new("codesign")
             .args(["--verify", "--deep", "--strict"])
             .arg(&app),
-        "verify ezz.app signature",
+        "verify Ezz.app signature",
     )?;
 
     // DMG 根目录再放一个指向 /Applications 的符号链接。

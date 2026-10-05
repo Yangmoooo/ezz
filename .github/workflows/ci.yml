@@ -77,7 +77,7 @@ jobs:
           fi
 
           hdiutil attach -nobrowse -readonly -mountpoint "$mount" "$dmg"
-          app="$mount/ezz.app"
+          app="$mount/Ezz.app"
           test -d "$app"
           test "$(readlink "$mount/Applications")" = "/Applications"
           test -f "$mount/README.md"

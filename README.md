@@ -15,13 +15,13 @@ Ezz 是一个轻量解压工具，它封装了 7-Zip 作为引擎，自动尝试
 ### macOS
 
 1. 下载 `ezz-macos-arm64.dmg` 并打开。
-2. 把 `ezz.app` 拖进“应用程序”目录（可以直接拖到 DMG 里那个 `/Applications` 链接上）。
-3. 首次运行时在 Finder 中右键点击 `ezz.app`，选择“打开”，再确认打开。
+2. 把 `Ezz.app` 拖进“应用程序”目录（可以直接拖到 DMG 里那个 `/Applications` 链接上）。
+3. 首次运行时在 Finder 中右键点击 `Ezz.app`，选择“打开”，再确认打开。
 
 首发版本使用 ad-hoc 签名，没有 Apple Developer ID 签名和公证。如果右键打开仍被拦截，可在“系统设置 > 隐私与安全性”中选择“仍要打开”。最后的手动方案是：
 
 ```sh
-xattr -dr com.apple.quarantine /Applications/ezz.app
+xattr -dr com.apple.quarantine /Applications/Ezz.app
 ```
 
 放行只需要完成一次。请只对从本项目 GitHub Release 下载并自行确认来源的应用执行该命令。
@@ -112,7 +112,7 @@ just package      # 等价于 cargo xtask package
 | 平台 | 产物 | 内容 |
 | --- | --- | --- |
 | Windows | `ezz-windows-x64.zip` | `ezz-windows-x64/`：`ezz.exe`、`7zz.exe`、原样拷贝的 `README.md` 与 `CHANGELOG.md`、`licenses/` |
-| macOS | `ezz-macos-arm64.dmg` | 卷标 `Ezz`：`ezz.app`（内含 `7zz`、图标与 `licenses/`）、原样拷贝的 `README.md` 与 `CHANGELOG.md`、指向 `/Applications` 的符号链接 |
+| macOS | `ezz-macos-arm64.dmg` | 卷标 `Ezz`：`Ezz.app`（内含 `7zz`、图标与 `licenses/`）、原样拷贝的 `README.md` 与 `CHANGELOG.md`、指向 `/Applications` 的符号链接 |
 
 版本只有一个来源：`Cargo.toml` 的 `package.version`（Windows 写在 exe 的 `VERSIONINFO` 里，macOS 写在 `Info.plist` 里）
 
