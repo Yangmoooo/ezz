@@ -102,10 +102,6 @@ fn workflow_with_store(
 #[ignore = "requires cargo xtask prepare"]
 fn real_archive_extracts_and_commits_its_single_top_level_file() {
     let seven_zip = prepared_seven_zip();
-    assert!(
-        seven_zip.is_file(),
-        "run `cargo xtask prepare` before this test"
-    );
 
     let sandbox = tempfile::tempdir().expect("create test sandbox");
     let payload = sandbox.path().join("payload.txt");
@@ -141,10 +137,6 @@ fn real_archive_extracts_and_commits_its_single_top_level_file() {
 #[ignore = "requires cargo xtask prepare"]
 fn cleanup_failure_is_reported_as_a_success_warning() {
     let seven_zip = prepared_seven_zip();
-    assert!(
-        seven_zip.is_file(),
-        "run `cargo xtask prepare` before this test"
-    );
 
     let sandbox = tempfile::tempdir().expect("create test sandbox");
     let payload = sandbox.path().join("payload.txt");
@@ -172,10 +164,6 @@ fn cleanup_failure_is_reported_as_a_success_warning() {
 #[ignore = "requires cargo xtask prepare"]
 fn damaged_archive_does_not_commit_partial_output_or_clean_the_source() {
     let seven_zip = prepared_seven_zip();
-    assert!(
-        seven_zip.is_file(),
-        "run `cargo xtask prepare` before this test"
-    );
 
     let sandbox = tempfile::tempdir().expect("create test sandbox");
     let first = sandbox.path().join("first.txt");
@@ -223,10 +211,6 @@ fn damaged_archive_does_not_commit_partial_output_or_clean_the_source() {
 #[ignore = "requires cargo xtask prepare"]
 fn multiple_top_level_entries_are_committed_in_an_archive_named_directory() {
     let seven_zip = prepared_seven_zip();
-    assert!(
-        seven_zip.is_file(),
-        "run `cargo xtask prepare` before this test"
-    );
 
     let sandbox = tempfile::tempdir().expect("create test sandbox");
     let first = sandbox.path().join("first.txt");
@@ -257,10 +241,6 @@ fn multiple_top_level_entries_are_committed_in_an_archive_named_directory() {
 #[ignore = "requires cargo xtask prepare"]
 fn existing_file_is_preserved_and_new_output_gets_a_sequence_suffix() {
     let seven_zip = prepared_seven_zip();
-    assert!(
-        seven_zip.is_file(),
-        "run `cargo xtask prepare` before this test"
-    );
 
     let sandbox = tempfile::tempdir().expect("create test sandbox");
     let payload = sandbox.path().join("payload.txt");
@@ -283,10 +263,6 @@ fn existing_file_is_preserved_and_new_output_gets_a_sequence_suffix() {
 #[ignore = "requires cargo xtask prepare"]
 fn existing_directory_is_preserved_and_new_output_directory_gets_a_sequence_suffix() {
     let seven_zip = prepared_seven_zip();
-    assert!(
-        seven_zip.is_file(),
-        "run `cargo xtask prepare` before this test"
-    );
 
     let sandbox = tempfile::tempdir().expect("create test sandbox");
     let first = sandbox.path().join("first.txt");
@@ -330,10 +306,6 @@ fn existing_directory_is_preserved_and_new_output_directory_gets_a_sequence_suff
 #[ignore = "requires cargo xtask prepare"]
 fn platform_metadata_does_not_change_the_top_level_layout() {
     let seven_zip = prepared_seven_zip();
-    assert!(
-        seven_zip.is_file(),
-        "run `cargo xtask prepare` before this test"
-    );
 
     let sandbox = tempfile::tempdir().expect("create test sandbox");
     let payload = sandbox.path().join("payload.txt");
@@ -371,10 +343,6 @@ fn symbolic_link_that_escapes_the_result_is_sanitized_and_reported() {
     use std::os::unix::fs::symlink;
 
     let seven_zip = prepared_seven_zip();
-    assert!(
-        seven_zip.is_file(),
-        "run `cargo xtask prepare` before this test"
-    );
 
     let sandbox = tempfile::tempdir().expect("create test sandbox");
     let link = sandbox.path().join("escape");
@@ -425,10 +393,6 @@ fn symbolic_link_that_escapes_the_result_is_sanitized_and_reported() {
 #[ignore = "requires cargo xtask prepare"]
 fn parent_directory_entry_is_sanitized_and_reported() {
     let seven_zip = prepared_seven_zip();
-    assert!(
-        seven_zip.is_file(),
-        "run `cargo xtask prepare` before this test"
-    );
 
     let sandbox = tempfile::tempdir().expect("create test sandbox");
     let archive = sandbox.path().join("unsafe.zip");
@@ -476,10 +440,6 @@ fn parent_directory_entry_is_sanitized_and_reported() {
 #[ignore = "requires cargo xtask prepare"]
 fn encrypted_archive_uses_prompted_password_and_honors_keep_source() {
     let seven_zip = prepared_seven_zip();
-    assert!(
-        seven_zip.is_file(),
-        "run `cargo xtask prepare` before this test"
-    );
 
     let sandbox = tempfile::tempdir().expect("create test sandbox");
     let payload = sandbox.path().join("secret.txt");
@@ -512,10 +472,6 @@ fn encrypted_archive_uses_prompted_password_and_honors_keep_source() {
 #[ignore = "requires cargo xtask prepare"]
 fn content_encrypted_archive_uses_the_prompted_password() {
     let seven_zip = prepared_seven_zip();
-    assert!(
-        seven_zip.is_file(),
-        "run `cargo xtask prepare` before this test"
-    );
 
     let sandbox = tempfile::tempdir().expect("create test sandbox");
     let payload = sandbox.path().join("visible-name.txt");
@@ -551,10 +507,6 @@ fn content_encrypted_archive_uses_the_prompted_password() {
 #[ignore = "requires cargo xtask prepare"]
 fn password_prompt_can_retry_after_an_incorrect_password() {
     let seven_zip = prepared_seven_zip();
-    assert!(
-        seven_zip.is_file(),
-        "run `cargo xtask prepare` before this test"
-    );
 
     let sandbox = tempfile::tempdir().expect("create test sandbox");
     let payload = sandbox.path().join("secret.txt");
@@ -593,10 +545,6 @@ fn password_prompt_can_retry_after_an_incorrect_password() {
 #[ignore = "requires cargo xtask prepare"]
 fn cancelling_the_password_prompt_preserves_the_archive() {
     let seven_zip = prepared_seven_zip();
-    assert!(
-        seven_zip.is_file(),
-        "run `cargo xtask prepare` before this test"
-    );
 
     let sandbox = tempfile::tempdir().expect("create test sandbox");
     let payload = sandbox.path().join("cancelled-secret.txt");
@@ -628,10 +576,6 @@ fn cancelling_the_password_prompt_preserves_the_archive() {
 #[ignore = "requires cargo xtask prepare"]
 fn remembered_password_is_used_for_the_next_archive() {
     let seven_zip = prepared_seven_zip();
-    assert!(
-        seven_zip.is_file(),
-        "run `cargo xtask prepare` before this test"
-    );
 
     let sandbox = tempfile::tempdir().expect("create test sandbox");
     let password_store = sandbox.path().join("passwords.json");
@@ -684,10 +628,6 @@ fn remembered_password_is_used_for_the_next_archive() {
 #[ignore = "requires cargo xtask prepare"]
 fn numeric_volume_input_finds_the_first_volume_and_cleans_the_complete_set() {
     let seven_zip = prepared_seven_zip();
-    assert!(
-        seven_zip.is_file(),
-        "run `cargo xtask prepare` before this test"
-    );
 
     let sandbox = tempfile::tempdir().expect("create test sandbox");
     let payload = sandbox.path().join("payload.bin");
@@ -722,10 +662,6 @@ fn numeric_volume_input_finds_the_first_volume_and_cleans_the_complete_set() {
 #[ignore = "requires cargo xtask prepare"]
 fn numeric_volume_uses_the_logical_archive_name_for_multiple_outputs() {
     let seven_zip = prepared_seven_zip();
-    assert!(
-        seven_zip.is_file(),
-        "run `cargo xtask prepare` before this test"
-    );
 
     let sandbox = tempfile::tempdir().expect("create test sandbox");
     let first_payload = sandbox.path().join("first.bin");
@@ -763,10 +699,6 @@ fn numeric_volume_uses_the_logical_archive_name_for_multiple_outputs() {
 #[ignore = "requires cargo xtask prepare"]
 fn steganographier_mp4_extracts_its_embedded_zip() {
     let seven_zip = prepared_seven_zip();
-    assert!(
-        seven_zip.is_file(),
-        "run `cargo xtask prepare` before this test"
-    );
 
     let sandbox = tempfile::tempdir().expect("create test sandbox");
     let payload = sandbox.path().join("hidden.txt");
@@ -797,10 +729,6 @@ fn steganographier_mp4_extracts_its_embedded_zip() {
 #[ignore = "requires cargo xtask prepare"]
 fn ordinary_mp4_is_rejected_without_modifying_the_source() {
     let seven_zip = prepared_seven_zip();
-    assert!(
-        seven_zip.is_file(),
-        "run `cargo xtask prepare` before this test"
-    );
 
     let sandbox = tempfile::tempdir().expect("create test sandbox");
     let video = sandbox.path().join("ordinary.mp4");
@@ -824,10 +752,6 @@ fn ordinary_mp4_is_rejected_without_modifying_the_source() {
 #[ignore = "requires cargo xtask prepare"]
 fn archive_with_an_mp4_extension_is_detected_by_content() {
     let seven_zip = prepared_seven_zip();
-    assert!(
-        seven_zip.is_file(),
-        "run `cargo xtask prepare` before this test"
-    );
 
     let sandbox = tempfile::tempdir().expect("create test sandbox");
     let payload = sandbox.path().join("renamed.txt");
@@ -852,10 +776,6 @@ fn archive_with_an_mp4_extension_is_detected_by_content() {
 #[ignore = "requires cargo xtask prepare"]
 fn tar_gzip_and_xz_archives_extract_through_the_shared_workflow() {
     let seven_zip = prepared_seven_zip();
-    assert!(
-        seven_zip.is_file(),
-        "run `cargo xtask prepare` before this test"
-    );
 
     for (archive_type, extension) in [("tar", "tar"), ("gzip", "gz"), ("xz", "xz")] {
         let sandbox = tempfile::tempdir().expect("create format sandbox");
@@ -894,10 +814,6 @@ fn tar_gzip_and_xz_archives_extract_through_the_shared_workflow() {
 #[ignore = "requires cargo xtask prepare"]
 fn steganographier_mkv_extracts_its_embedded_zip() {
     let seven_zip = prepared_seven_zip();
-    assert!(
-        seven_zip.is_file(),
-        "run `cargo xtask prepare` before this test"
-    );
 
     let sandbox = tempfile::tempdir().expect("create test sandbox");
     let payload = sandbox.path().join("mkv-hidden.txt");
@@ -928,10 +844,6 @@ fn steganographier_mkv_extracts_its_embedded_zip() {
 #[ignore = "requires cargo xtask prepare"]
 fn rar_non_first_volume_extracts_and_cleans_the_complete_set() {
     let seven_zip = prepared_seven_zip();
-    assert!(
-        seven_zip.is_file(),
-        "run `cargo xtask prepare` before this test"
-    );
 
     let sandbox = tempfile::tempdir().expect("create test sandbox");
     let mut volumes = Vec::new();
@@ -962,10 +874,6 @@ fn rar_non_first_volume_extracts_and_cleans_the_complete_set() {
 #[ignore = "requires cargo xtask prepare"]
 fn zip_non_first_volume_extracts_and_cleans_the_complete_set() {
     let seven_zip = prepared_seven_zip();
-    assert!(
-        seven_zip.is_file(),
-        "run `cargo xtask prepare` before this test"
-    );
 
     let sandbox = tempfile::tempdir().expect("create test sandbox");
     let first = sandbox.path().join("zip-multivolume.z01");
@@ -992,10 +900,6 @@ fn zip_non_first_volume_extracts_and_cleans_the_complete_set() {
 #[ignore = "requires cargo xtask prepare"]
 fn symbolic_link_entries_do_not_fail_the_input() {
     let seven_zip = prepared_seven_zip();
-    assert!(
-        seven_zip.is_file(),
-        "run `cargo xtask prepare` before this test"
-    );
 
     let sandbox = tempfile::tempdir().expect("create test sandbox");
     let archive = sandbox.path().join("links.zip");
@@ -1068,10 +972,6 @@ fn symbolic_link_entries_do_not_fail_the_input() {
 #[ignore = "requires cargo xtask prepare"]
 fn archive_with_only_platform_metadata_is_a_reported_degraded_success() {
     let seven_zip = prepared_seven_zip();
-    assert!(
-        seven_zip.is_file(),
-        "run `cargo xtask prepare` before this test"
-    );
 
     let sandbox = tempfile::tempdir().expect("create test sandbox");
     let archive = sandbox.path().join("meta.zip");
@@ -1136,10 +1036,6 @@ fn write_tar(path: &Path, entries: &[(&str, &[u8])]) {
 #[ignore = "requires cargo xtask prepare"]
 fn drive_prefixed_entries_are_sanitized_and_reported() {
     let seven_zip = prepared_seven_zip();
-    assert!(
-        seven_zip.is_file(),
-        "run `cargo xtask prepare` before this test"
-    );
 
     let sandbox = tempfile::tempdir().expect("create test sandbox");
     let archive = sandbox.path().join("drive.tar");
@@ -1185,10 +1081,6 @@ fn drive_prefixed_entries_are_sanitized_and_reported() {
 #[ignore = "requires cargo xtask prepare"]
 fn absolute_path_entries_are_sanitized_and_reported() {
     let seven_zip = prepared_seven_zip();
-    assert!(
-        seven_zip.is_file(),
-        "run `cargo xtask prepare` before this test"
-    );
 
     let sandbox = tempfile::tempdir().expect("create test sandbox");
     let archive = sandbox.path().join("absolute.zip");
@@ -1243,10 +1135,6 @@ fn corrupt_last_entry_byte(bytes: &mut [u8]) {
 #[ignore = "requires cargo xtask prepare"]
 fn a_corrupted_entry_is_committed_and_reported_while_the_rest_is_kept() {
     let seven_zip = prepared_seven_zip();
-    assert!(
-        seven_zip.is_file(),
-        "run `cargo xtask prepare` before this test"
-    );
 
     let sandbox = tempfile::tempdir().expect("create test sandbox");
     let archive = sandbox.path().join("corrupted.zip");
@@ -1306,10 +1194,6 @@ fn a_corrupted_entry_is_committed_and_reported_while_the_rest_is_kept() {
 #[ignore = "requires cargo xtask prepare"]
 fn unicode_and_space_names_are_committed_unchanged() {
     let seven_zip = prepared_seven_zip();
-    assert!(
-        seven_zip.is_file(),
-        "run `cargo xtask prepare` before this test"
-    );
 
     let sandbox = tempfile::tempdir().expect("create test sandbox");
     let source = sandbox.path().join("source");
@@ -1368,10 +1252,6 @@ fn special_files_are_discarded_and_reported() {
 #[ignore = "requires cargo xtask prepare"]
 fn hard_links_are_extracted_as_regular_files() {
     let seven_zip = prepared_seven_zip();
-    assert!(
-        seven_zip.is_file(),
-        "run `cargo xtask prepare` before this test"
-    );
 
     let sandbox = tempfile::tempdir().expect("create test sandbox");
     let source = sandbox.path().join("source");
@@ -1549,11 +1429,13 @@ fn prepared_seven_zip() -> PathBuf {
     } else {
         "7zz"
     };
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("target")
         .join("ezz-tools")
-        .join("26.02")
-        .join(binary_name)
+        .join(crate::SEVEN_ZIP_VERSION)
+        .join(binary_name);
+    assert!(path.is_file(), "run `cargo xtask prepare` before this test");
+    path
 }
 
 fn fixture(name: &str) -> PathBuf {
