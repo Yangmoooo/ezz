@@ -9,11 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- 新增 macOS 11+ Apple Silicon 原生 AppKit 桌面支持、文件关联、文件选择器和 ad-hoc 签名应用包
+- 新增 macOS 11+ Apple Silicon 原生 AppKit 桌面支持
 - 新增 Windows 10/11 x64 原生桌面适配与 Portable ZIP
 - 新增事务式解压、路径安全验证、无冲突提交和结构化成功警告
-- 支持从任意数字分卷、RAR 分卷或 ZIP 分卷自动定位首卷并清理完整集合
-- 支持通过内容识别 Steganographier MP4/MKV，同时拒绝普通视频
 - 新增原生密码重试弹窗、结构化明文密码库和最近成功密码复用
 - 新增固定 7zz-bin 26.02 版本、SHA-256 校验以及 `cargo xtask prepare/package`
 - 新增 macOS arm64 与 Windows x64 的真实 7-Zip CI 测试和发布物构建
@@ -24,15 +22,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 普通归档改为按内容探测，不再依赖扩展名判断是否支持
 - 原归档只在完整结果提交后移入系统废纸篓或回收站，清理失败不再使解压结果失败
 - 密码库和日志迁移到平台标准用户数据目录，且不自动读取或迁移 v2 数据
-- 并发调用改为每平台原生串行化：Windows 从启动到退出持有命名互斥体，拿不到时立即跳过并报告（点名本次调用的文件；无参数启动则提示已在运行）；macOS 由应用单实例与主线程同步提取保证
+- 平台原生串行化：Windows 从启动到退出持有命名互斥体，拿不到时立即跳过并报告（点名本次调用的文件；无参数启动则提示已在运行）；macOS 由应用单实例与主线程同步提取保证
 - 进程退出码：任一输入失败或启动失败为 `1`，全部成功为 `0`（被跳过与取消文件选择器仍为 `0`）
 - macOS 和 Windows 使用各自原生桌面交互，核心解压行为由共享 Rust library 提供
-- 发布物改用不含版本号的文件名：`ezz-windows-x64.zip` 与 `ezz-macos-arm64.dmg`；包内目录同样不含版本号，版本只由 exe 的 `VERSIONINFO` 与 `Info.plist` 承载
-- macOS 发布物由 ZIP 改为 DMG（卷标 `Ezz`，含指向 `/Applications` 的符号链接），许可证文本放进 `.app` 内部的 `Contents/Resources/licenses/`
 
 ### Removed
 
-- 移除 Linux、macOS Intel、Windows ARM 和 macOS 10.x 支持
+- 移除 Linux 支持
 - 移除 `add`、`extract` 子命令以及所有正式 CLI 契约
 - 移除主窗口、持久化设置和后台常驻能力
 - 移除构建脚本自动联网下载 7-Zip 的行为
