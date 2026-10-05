@@ -265,7 +265,7 @@ mod tests {
     use std::time::{Duration, Instant};
     use windows::Win32::UI::Controls::EM_GETPASSWORDCHAR;
     use windows::Win32::UI::WindowsAndMessaging::{
-        EnumChildWindows, FindWindowW, GetClassNameW, GetDlgCtrlID, GetWindowTextW,
+        EnumChildWindows, FindWindowW, GetClassNameW, GetDlgCtrlID, GetDlgItem, GetWindowTextW,
     };
     use windows::core::BOOL;
 
@@ -288,14 +288,18 @@ mod tests {
         }
     }
 
-    /// 等对话框出现：`show` 在另一个线程里创建它，这里轮询窗口标题。
+    /// 等对话框出现**且控件已经建好**：`show` 在另一个线程里创建它，这里轮询。
+    ///
+    /// 只等标题不够：`FindWindowW` 连刚创建、`WM_INITDIALOG` 还没跑完的窗口也能找到，
+    /// 那种窗口一个子控件都没有（枚举会得到 0 个）。
     fn wait_for_dialog() -> HWND {
         let title = super::super::wide("Password required");
         let deadline = Instant::now() + Duration::from_secs(10);
         while Instant::now() < deadline {
-            // SAFETY: 标题是以 NUL 结尾的缓冲区。
+            // SAFETY: 标题是以 NUL 结尾的缓冲区，`window` 是本进程的窗口句柄。
             if let Ok(window) = unsafe { FindWindowW(None, PCWSTR(title.as_ptr())) }
                 && !window.0.is_null()
+                && unsafe { GetDlgItem(Some(window), super::super::ID_PASSWORD) }.is_ok()
             {
                 return window;
             }
