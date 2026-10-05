@@ -1432,7 +1432,6 @@ fn prepared_seven_zip() -> PathBuf {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("target")
         .join("ezz-tools")
-        .join(crate::SEVEN_ZIP_VERSION)
         .join(binary_name);
     assert!(path.is_file(), "run `cargo xtask prepare` before this test");
     path

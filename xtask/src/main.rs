@@ -14,35 +14,24 @@ use xz2::read::XzDecoder;
 #[cfg(target_os = "windows")]
 use zip::ZipArchive;
 
-const SEVEN_ZIP_VERSION: &str = "26.02";
-
-#[cfg(target_os = "macos")]
-const ASSET: Asset = Asset {
-    archive_name: "7zz-macos-universal.tar.xz",
-    binary_name: "7zz",
-    sha256: "f81a8e812ba3a997f7ec18e72a8361482c7af72994ec4e3057ad60f7f05a6c41",
-    kind: ArchiveKind::TarXz,
-};
-
-#[cfg(target_os = "windows")]
-const ASSET: Asset = Asset {
-    archive_name: "7zz-windows-x64.zip",
-    binary_name: "7zz.exe",
-    sha256: "6bfa2d9e77d7c4b1abfb3acb9eb996aed09ff978dadcdf492ee0c2b95b8e1628",
-    kind: ArchiveKind::Zip,
-};
-
 #[cfg(not(any(
     all(target_os = "windows", target_arch = "x86_64"),
     all(target_os = "macos", target_arch = "aarch64")
 )))]
 compile_error!("ezz xtask only supports Windows and macOS");
 
-#[derive(Clone, Copy)]
-struct Asset {
-    archive_name: &'static str,
-    binary_name: &'static str,
-    sha256: &'static str,
+/// `assets/7zz-bin.toml` 里属于当前平台的表名。
+#[cfg(target_os = "windows")]
+const PLATFORM_KEY: &str = "windows-x64";
+#[cfg(target_os = "macos")]
+const PLATFORM_KEY: &str = "macos-arm64";
+
+/// 发布引擎：版本、当前平台的资产名与校验和。唯一来源是 `assets/7zz-bin.toml`。
+struct EngineAsset {
+    version: String,
+    archive_name: String,
+    binary_name: String,
+    sha256: String,
     kind: ArchiveKind,
 }
 
@@ -52,6 +41,58 @@ enum ArchiveKind {
     TarXz,
     #[cfg(target_os = "windows")]
     Zip,
+}
+
+impl ArchiveKind {
+    fn from_name(archive: &str) -> Result<Self, Box<dyn Error>> {
+        #[cfg(target_os = "macos")]
+        if archive.ends_with(".tar.xz") {
+            return Ok(Self::TarXz);
+        }
+        #[cfg(target_os = "windows")]
+        if archive.ends_with(".zip") {
+            return Ok(Self::Zip);
+        }
+        Err(format!("unsupported engine archive name: {archive}").into())
+    }
+}
+
+fn load_engine_asset() -> Result<EngineAsset, Box<dyn Error>> {
+    let path = engine_manifest_path();
+    let document: toml::Value = toml::from_str(&fs::read_to_string(&path)?)?;
+    let table = document
+        .get(PLATFORM_KEY)
+        .ok_or_else(|| format!("{} has no [{PLATFORM_KEY}] table", path.display()))?;
+    let archive_name = string_field(table, "archive")?;
+    Ok(EngineAsset {
+        kind: ArchiveKind::from_name(&archive_name)?,
+        archive_name,
+        binary_name: string_field(table, "binary")?,
+        sha256: string_field(table, "sha256")?,
+        version: string_field(&document, "version")?,
+    })
+}
+
+fn string_field(value: &toml::Value, key: &str) -> Result<String, Box<dyn Error>> {
+    value
+        .get(key)
+        .and_then(toml::Value::as_str)
+        .map(str::to_owned)
+        .ok_or_else(|| format!("missing string field {key} in assets/7zz-bin.toml").into())
+}
+
+fn engine_manifest_path() -> PathBuf {
+    workspace_root().join("assets").join("7zz-bin.toml")
+}
+
+/// 当前平台的稳定引擎路径（不带版本号）：测试与打包都从这里取。
+fn engine_path() -> PathBuf {
+    let name = if cfg!(target_os = "windows") {
+        "7zz.exe"
+    } else {
+        "7zz"
+    };
+    workspace_root().join("target").join("ezz-tools").join(name)
 }
 
 fn main() {
@@ -70,11 +111,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     match env::args_os().nth(1).as_deref() {
         Some(command) if command == OsStr::new("prepare") => {
             let binary = prepare()?;
-            println!(
-                "Prepared 7-Zip {} at {}",
-                SEVEN_ZIP_VERSION,
-                binary.display()
-            );
+            println!("Prepared 7-Zip at {}", binary.display());
             Ok(())
         }
         Some(command) if command == OsStr::new("package") => {
@@ -82,7 +119,13 @@ fn run() -> Result<(), Box<dyn Error>> {
             println!("Packaged Ezz at {}", artifact.display());
             Ok(())
         }
-        _ => Err("usage: cargo xtask <prepare|package>".into()),
+        Some(command) if command == OsStr::new("update-7zz") => {
+            let version = env::args_os()
+                .nth(2)
+                .ok_or("usage: cargo xtask update-7zz <version>")?;
+            update_seven_zip(&version.to_string_lossy())
+        }
+        _ => Err("usage: cargo xtask <prepare|package|update-7zz>".into()),
     }
 }
 
@@ -323,39 +366,113 @@ fn run_command(command: &mut Command, operation: &str) -> Result<(), Box<dyn Err
     }
 }
 
+/// 下载并校验引擎，解到缓存目录；返回的稳定路径不包含版本号。
 fn prepare() -> Result<PathBuf, Box<dyn Error>> {
+    let asset = load_engine_asset()?;
     let cache_dir = workspace_root()
         .join("target")
         .join("ezz-tools")
-        .join(SEVEN_ZIP_VERSION);
+        .join(&asset.version);
     fs::create_dir_all(&cache_dir)?;
 
-    let archive_path = cache_dir.join(ASSET.archive_name);
-    if !archive_path.is_file() || sha256(&archive_path)? != ASSET.sha256 {
-        download(&asset_url(), &archive_path)?;
+    let archive_path = cache_dir.join(&asset.archive_name);
+    if !archive_path.is_file() || sha256(&archive_path)? != asset.sha256 {
+        download(&asset_url(&asset), &archive_path)?;
     }
 
     let actual_sha256 = sha256(&archive_path)?;
-    if actual_sha256 != ASSET.sha256 {
+    if actual_sha256 != asset.sha256 {
         return Err(format!(
             "checksum mismatch for {}: expected {}, got {}",
             archive_path.display(),
-            ASSET.sha256,
+            asset.sha256,
             actual_sha256
         )
         .into());
     }
 
-    let binary_path = cache_dir.join(ASSET.binary_name);
-    match ASSET.kind {
+    let extracted = cache_dir.join(&asset.binary_name);
+    match asset.kind {
         #[cfg(target_os = "macos")]
-        ArchiveKind::TarXz => extract_tar_xz(&archive_path, &binary_path)?,
+        ArchiveKind::TarXz => extract_tar_xz(&archive_path, &extracted, &asset.binary_name)?,
         #[cfg(target_os = "windows")]
-        ArchiveKind::Zip => extract_zip(&archive_path, &binary_path)?,
+        ArchiveKind::Zip => extract_zip(&archive_path, &extracted, &asset.binary_name)?,
     }
-    set_executable(&binary_path)?;
+    set_executable(&extracted)?;
 
-    Ok(binary_path)
+    let stable = engine_path();
+    fs::copy(&extracted, &stable)?;
+    set_executable(&stable)?;
+    Ok(stable)
+}
+
+/// 把 `assets/7zz-bin.toml` 升到给定版本：下载两个平台的资产、重算校验和、回写文件。
+fn update_seven_zip(version: &str) -> Result<(), Box<dyn Error>> {
+    let path = engine_manifest_path();
+    let document: toml::Value = toml::from_str(&fs::read_to_string(&path)?)?;
+    let cache_dir = workspace_root()
+        .join("target")
+        .join("ezz-tools")
+        .join(version);
+    fs::create_dir_all(&cache_dir)?;
+
+    let mut updated = Vec::new();
+    for key in ["windows-x64", "macos-arm64"] {
+        let table = document
+            .get(key)
+            .ok_or_else(|| format!("{} has no [{key}] table", path.display()))?;
+        let archive_name = string_field(table, "archive")?;
+        let binary_name = string_field(table, "binary")?;
+        let url = format!(
+            "https://github.com/Yangmoooo/7zz-bin/releases/download/{version}/{archive_name}"
+        );
+        let archive = cache_dir.join(&archive_name);
+        download(&url, &archive)?;
+        let digest = sha256(&archive)?;
+        println!("{key}: {archive_name}\n  sha256 = {digest}");
+        updated.push((key, archive_name, binary_name, digest));
+    }
+
+    // 手写而不是 toml 序列化：文件头的说明要留着。
+    let mut text = String::from(
+        "# 发布所用的 7-Zip 引擎：唯一来源。\n\
+         #\n\
+         # 升级用 `cargo xtask update-7zz <版本>`（或 `just 7zz-update <版本>`）：\n\
+         # 它下载下面两个平台的资产、重新计算 sha256 并回写本文件。\n",
+    );
+    text.push_str(&format!("\nversion = \"{version}\"\n"));
+    for (key, archive_name, binary_name, digest) in updated {
+        text.push_str(&format!(
+            "\n[{key}]\narchive = \"{archive_name}\"\nbinary = \"{binary_name}\"\nsha256 = \"{digest}\"\n"
+        ));
+    }
+    fs::write(&path, text)?;
+    println!("updated {}", path.display());
+
+    // 立刻按新条目准备一次：既填好缓存，也确认钉进去的哈希确实对得上。
+    let engine = prepare()?;
+    check_engine_version(&engine, version)?;
+    println!("prepared {}", engine.display());
+    Ok(())
+}
+
+/// 跑一次引擎，确认它自报的版本就是刚钉下的版本。
+fn check_engine_version(engine: &Path, expected: &str) -> Result<(), Box<dyn Error>> {
+    let output = Command::new(engine).output()?;
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    if !text.contains(expected) {
+        return Err(format!(
+            "{} does not report version {expected}; it printed: {}",
+            engine.display(),
+            text.lines().next().unwrap_or("").trim()
+        )
+        .into());
+    }
+    Ok(())
 }
 
 fn workspace_root() -> PathBuf {
@@ -365,10 +482,10 @@ fn workspace_root() -> PathBuf {
         .to_path_buf()
 }
 
-fn asset_url() -> String {
+fn asset_url(asset: &EngineAsset) -> String {
     format!(
-        "https://github.com/Yangmoooo/7zz-bin/releases/download/{SEVEN_ZIP_VERSION}/{}",
-        ASSET.archive_name
+        "https://github.com/Yangmoooo/7zz-bin/releases/download/{}/{}",
+        asset.version, asset.archive_name
     )
 }
 
@@ -417,31 +534,34 @@ fn sha256(path: &Path) -> Result<String, Box<dyn Error>> {
 }
 
 #[cfg(target_os = "macos")]
-fn extract_tar_xz(archive_path: &Path, destination: &Path) -> Result<(), Box<dyn Error>> {
+fn extract_tar_xz(
+    archive_path: &Path,
+    destination: &Path,
+    member: &str,
+) -> Result<(), Box<dyn Error>> {
     let decoder = XzDecoder::new(File::open(archive_path)?);
     let mut archive = tar::Archive::new(decoder);
 
     for entry in archive.entries()? {
         let mut entry = entry?;
-        if entry.path()?.file_name() == Some(OsStr::new(ASSET.binary_name)) {
+        if entry.path()?.file_name() == Some(OsStr::new(member)) {
             let mut output = File::create(destination)?;
             io::copy(&mut entry, &mut output)?;
             return Ok(());
         }
     }
 
-    Err(format!(
-        "{} is missing from {}",
-        ASSET.binary_name,
-        archive_path.display()
-    )
-    .into())
+    Err(format!("{member} is missing from {}", archive_path.display()).into())
 }
 
 #[cfg(target_os = "windows")]
-fn extract_zip(archive_path: &Path, destination: &Path) -> Result<(), Box<dyn Error>> {
+fn extract_zip(
+    archive_path: &Path,
+    destination: &Path,
+    member: &str,
+) -> Result<(), Box<dyn Error>> {
     let mut archive = ZipArchive::new(File::open(archive_path)?)?;
-    let mut entry = archive.by_name(ASSET.binary_name)?;
+    let mut entry = archive.by_name(member)?;
     let mut output = File::create(destination)?;
     io::copy(&mut entry, &mut output)?;
     Ok(())

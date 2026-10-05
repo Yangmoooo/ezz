@@ -30,7 +30,6 @@ fn prepared_seven_zip() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("target")
         .join("ezz-tools")
-        .join(ezz::SEVEN_ZIP_VERSION)
         .join("7zz.exe")
 }
 

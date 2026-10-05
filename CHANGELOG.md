@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 新增 Windows 10/11 x64 原生桌面适配与 Portable ZIP
 - 新增事务式解压、路径安全验证、无冲突提交和结构化成功警告
 - 新增原生密码重试弹窗、结构化明文密码库和最近成功密码复用
-- 新增固定 7zz-bin 26.02 版本、SHA-256 校验以及 `cargo xtask prepare/package`
+- 7-Zip 引擎的版本与两个平台的 SHA-256 集中在 `assets/7zz-bin.toml`（唯一来源），升级用 `cargo xtask update-7zz <版本>`：下载两个平台的资产、重算校验和、回写该文件，并就地验证本地引擎自报的版本；新增 `cargo xtask prepare/package`
 - 新增 macOS arm64 与 Windows x64 的真实 7-Zip CI 测试和发布物构建
 
 ### Changed

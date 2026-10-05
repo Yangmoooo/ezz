@@ -14,6 +14,10 @@ alias v  := verify
 prepare:
     cargo xtask prepare
 
+# 升级固定引擎版本：下载两个平台的资产、重算校验和、回写 assets/7zz-bin.toml
+update-7zz version:
+    cargo xtask update-7zz {{version}}
+
 # 生成当前平台的发布物，输出到 target/dist/
 package:
     cargo xtask package
