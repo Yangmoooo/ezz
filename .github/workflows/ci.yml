@@ -5,6 +5,7 @@ on:
     branches: [main]
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -26,8 +27,10 @@ jobs:
         include:
           - os: macos-15
             platform: macos-arm64
+            artifact: ezz-macos-arm64.dmg
           - os: windows-latest
             platform: windows-x64
+            artifact: ezz-windows-x64.zip
 
     steps:
       - uses: actions/checkout@v6
@@ -54,7 +57,6 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
-      # 发布物在两个平台上真实生成并检查内容；macOS 打包只有这里能执行。
       - name: Package release artifact
         run: cargo xtask package
 
@@ -89,7 +91,6 @@ jobs:
           test "$(plutil -extract CFBundleShortVersionString raw "$app/Contents/Info.plist")" = "$version"
           codesign --verify --deep --strict "$app"
 
-          # 直接运行包内的二进制：引擎必须与主程序并列。
           work="$PWD/target/e2e"
           rm -rf "$work" && mkdir -p "$work/in"
           printf 'packaged artifact check\n' > "$work/in/payload.txt"
@@ -120,7 +121,6 @@ jobs:
           test -f "$stage/licenses/ezz-LICENSE.txt"
           test -f "$stage/licenses/unRarLicense.txt"
 
-          # PowerShell 看不懂 bash 风格路径，先转成 Windows 路径。
           stage_win="$(cygpath -w "$stage")"
           powershell -NoProfile -Command "
             \$info = (Get-Item '$stage_win\\ezz.exe').VersionInfo
@@ -131,10 +131,17 @@ jobs:
             if (\$info.ProductVersion -ne '$version') { throw \"ProductVersion is \$(\$info.ProductVersion) but Cargo.toml says $version\" }
           "
 
-          # 用户拿到 ZIP 之后也是解压再运行，这里照做一遍。
           work="$PWD/target/e2e"
           rm -rf "$work" && mkdir -p "$work/in"
           printf 'packaged artifact check\n' > "$work/in/payload.txt"
           (cd "$work/in" && "$stage/7zz.exe" a "$work/archive.zip" payload.txt)
           "$stage/ezz.exe" "$(cygpath -w "$work/archive.zip")"
           grep -q "packaged artifact check" "$work/payload.txt"
+
+      - name: Upload the packaged artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: ezz-${{ matrix.platform }}
+          path: target/dist/${{ matrix.artifact }}
+          retention-days: 30
+          if-no-files-found: error

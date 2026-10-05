@@ -48,3 +48,18 @@ clean:
 
 update:
     cargo update
+
+# ── CI ────────────────────────────────────────────────────────────────────────
+
+# 手动触发一次 CI
+ci-run:
+    gh workflow run CI --ref main
+
+# 最近几次 CI 运行
+ci-list count="5":
+    gh run list --workflow=CI --limit {{count}}
+
+# 把最近一次 CI 的发布物下载到 target/ci/；指定可用 gh run download <run-id> --name …
+artifacts:
+    gh run download --name ezz-windows-x64 --dir target/ci
+    gh run download --name ezz-macos-arm64 --dir target/ci
