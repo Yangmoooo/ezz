@@ -2,6 +2,7 @@
 //!
 //! 逃逸或无法解析的链接、指向结果外的链接、设备/FIFO/socket 这类特殊文件都不进入提交集合。
 
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -73,15 +74,59 @@ fn relative_to(root: &Path, path: &Path) -> PathBuf {
     path.strip_prefix(root).unwrap_or(path).to_path_buf()
 }
 
-/// 归档所在目录的条目快照：名称 → 修改时间。
-pub(super) type DirectorySnapshot = Vec<(OsString, Option<SystemTime>)>;
+/// 归档所在目录的条目快照。
+#[derive(Debug, Default)]
+pub(super) struct DirectorySnapshot {
+    entries: BTreeMap<OsString, Option<EntryState>>,
+}
+
+/// 单个条目的状态；`None` 表示读不到属性（例如文件被独占）。
+#[derive(Debug, PartialEq, Eq)]
+struct EntryState {
+    directory: bool,
+    size: u64,
+    modified: Option<SystemTime>,
+}
+
+/// 解压前后父目录的差异。
+///
+/// `structural`：新增、消失、或大小/类型变了 —— 只有写操作会造成这些，判为逃逸。
+/// `timestamps`：只有修改时间变了 —— 父目录里任何条目的时间戳都可能被别的程序
+/// （资源管理器、杀毒、索引器、刚写入的文件自身的元数据收尾）改掉，不足以判为逃逸。
+#[derive(Debug, Default)]
+pub(super) struct DirectoryChanges {
+    pub(super) structural: Vec<String>,
+    pub(super) timestamps: Vec<String>,
+}
+
+impl DirectoryChanges {
+    /// 只有时间戳变了的条目写成一行；没有则返回 `None`。
+    pub(super) fn describe_timestamps(&self) -> Option<String> {
+        (!self.timestamps.is_empty()).then(|| describe(&self.timestamps))
+    }
+}
+
+/// 把条目列表写成一行，过多的只列前几个。
+fn describe(names: &[String]) -> String {
+    const SHOWN: usize = 8;
+    let mut text = names
+        .iter()
+        .take(SHOWN)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(", ");
+    if names.len() > SHOWN {
+        text.push_str(&format!(" (and {} more)", names.len() - SHOWN));
+    }
+    text
+}
 
 pub(super) fn directory_snapshot(
     directory: &Path,
     ignore: &Path,
 ) -> Result<DirectorySnapshot, ExtractionError> {
     let ignored_name = ignore.file_name();
-    let mut snapshot = Vec::new();
+    let mut snapshot = DirectorySnapshot::default();
     let entries = fs::read_dir(directory)
         .map_err(|error| file_system_error("snapshot directory", directory, error))?;
     for entry in entries {
@@ -90,18 +135,49 @@ pub(super) fn directory_snapshot(
         if Some(entry.file_name().as_os_str()) == ignored_name {
             continue;
         }
-        let modified = entry
-            .metadata()
-            .ok()
-            .and_then(|metadata| metadata.modified().ok());
-        snapshot.push((entry.file_name(), modified));
+        let state = entry.metadata().ok().map(|metadata| EntryState {
+            directory: metadata.is_dir(),
+            size: metadata.len(),
+            modified: metadata.modified().ok(),
+        });
+        snapshot.entries.insert(entry.file_name(), state);
     }
-    snapshot.sort();
     Ok(snapshot)
 }
 
-/// 解压不得在归档所在目录留下任何新增或改动。
-///
+fn compare(before: &DirectorySnapshot, after: &DirectorySnapshot) -> DirectoryChanges {
+    let mut changes = DirectoryChanges::default();
+    for (name, before_state) in &before.entries {
+        let display = name.to_string_lossy().into_owned();
+        match (
+            before_state.as_ref(),
+            after.entries.get(name).and_then(Option::as_ref),
+        ) {
+            (_, None) => changes.structural.push(format!("removed {display}")),
+            (Some(before_state), Some(after_state)) if before_state == after_state => {}
+            (Some(before_state), Some(after_state)) => {
+                if before_state.directory != after_state.directory
+                    || before_state.size != after_state.size
+                {
+                    changes.structural.push(format!("changed {display}"));
+                } else {
+                    changes.timestamps.push(display);
+                }
+            }
+            // 属性读不到：内容有没有变无从判断，不据此判定逃逸。
+            (None, Some(_)) => changes.timestamps.push(display),
+        }
+    }
+    for name in after.entries.keys() {
+        if !before.entries.contains_key(name) {
+            changes
+                .structural
+                .push(format!("added {}", name.to_string_lossy()));
+        }
+    }
+    changes
+}
+
 /// 条目路径是否绝对或可能逃逸：绝对路径、盘符前缀，或含 `..` 段。
 ///
 /// 用于报告：7-Zip 会把这类条目重写进工作目录。
@@ -121,20 +197,25 @@ pub(crate) fn is_safe_relative_path(path: &Path) -> bool {
             .all(|component| matches!(component, std::path::Component::Normal(_)))
 }
 
-/// 发现差异即致命失败：不提交，也不清理原归档。
+/// 解压不得在归档所在目录留下任何新增或改动。
+///
+/// 发现结构变化即致命失败：不提交，也不清理原归档。时间戳单独变了一律放行，由调用方记录。
 pub(super) fn validate_escape_invariant(
     directory: &Path,
     ignore: &Path,
     before: &DirectorySnapshot,
-) -> Result<(), ExtractionError> {
-    let after = directory_snapshot(directory, ignore)?;
-    if &after == before {
-        return Ok(());
+) -> Result<DirectoryChanges, ExtractionError> {
+    let changes = compare(before, &directory_snapshot(directory, ignore)?);
+    if changes.structural.is_empty() {
+        return Ok(changes);
     }
 
     Err(ExtractionError::UnsafeOutput {
         path: directory.to_path_buf(),
-        reason: "extraction changed entries outside its workspace".to_owned(),
+        reason: format!(
+            "extraction changed entries outside its workspace: {}",
+            describe(&changes.structural)
+        ),
     })
 }
 
@@ -160,13 +241,65 @@ mod tests {
         );
 
         std::fs::write(sandbox.path().join("escaped.txt"), b"outside").expect("write outside");
+        let error = validate_escape_invariant(sandbox.path(), &workspace, &snapshot)
+            .expect_err("a new entry outside the workspace must break the invariant");
+        assert!(matches!(error, ExtractionError::UnsafeOutput { .. }));
         assert!(
-            matches!(
-                validate_escape_invariant(sandbox.path(), &workspace, &snapshot),
-                Err(ExtractionError::UnsafeOutput { .. })
-            ),
-            "a new entry outside the workspace must break the invariant"
+            error.to_string().contains("escaped.txt"),
+            "the error must name the entry: {error}"
         );
+    }
+
+    /// 只有时间戳变了的条目不算逃逸：解压期间别的程序随时会动父目录里的文件。
+    #[test]
+    fn timestamp_only_changes_are_not_an_escape() {
+        let sandbox = tempfile::tempdir().expect("create test sandbox");
+        let workspace = sandbox.path().join(".ezz-work-test");
+        std::fs::create_dir(&workspace).expect("create workspace");
+        let neighbour = sandbox.path().join("neighbour.txt");
+        std::fs::write(&neighbour, b"untouched").expect("write neighbour");
+
+        let snapshot = directory_snapshot(sandbox.path(), &workspace).expect("snapshot");
+
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&neighbour)
+            .expect("open neighbour")
+            .set_modified(SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1))
+            .expect("set modification time");
+
+        let changes = validate_escape_invariant(sandbox.path(), &workspace, &snapshot)
+            .expect("a timestamp change alone is not an escape");
+        assert!(changes.structural.is_empty(), "{changes:?}");
+        assert_eq!(changes.timestamps, ["neighbour.txt"]);
+        assert_eq!(
+            changes.describe_timestamps().as_deref(),
+            Some("neighbour.txt")
+        );
+    }
+
+    /// 已有条目被改写（大小变了）或消失都算逃逸。
+    #[test]
+    fn rewritten_or_removed_neighbours_are_an_escape() {
+        let sandbox = tempfile::tempdir().expect("create test sandbox");
+        let workspace = sandbox.path().join(".ezz-work-test");
+        std::fs::create_dir(&workspace).expect("create workspace");
+        let neighbour = sandbox.path().join("neighbour.txt");
+        std::fs::write(&neighbour, b"before").expect("write neighbour");
+
+        let snapshot = directory_snapshot(sandbox.path(), &workspace).expect("snapshot");
+        std::fs::write(&neighbour, b"a different length").expect("rewrite neighbour");
+        assert!(matches!(
+            validate_escape_invariant(sandbox.path(), &workspace, &snapshot),
+            Err(ExtractionError::UnsafeOutput { .. })
+        ));
+
+        let snapshot = directory_snapshot(sandbox.path(), &workspace).expect("snapshot");
+        std::fs::remove_file(&neighbour).expect("remove neighbour");
+        assert!(matches!(
+            validate_escape_invariant(sandbox.path(), &workspace, &snapshot),
+            Err(ExtractionError::UnsafeOutput { .. })
+        ));
     }
     /// 在不支持符号链接的环境（例如没有权限的 CI）上返回 false，由调用方跳过。
     fn try_symlink(target: &Path, link: &Path) -> bool {

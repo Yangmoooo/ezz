@@ -295,7 +295,10 @@ impl ExtractionWorkflow {
             }
         };
 
-        validate_escape_invariant(parent, workspace.path(), &snapshot)?;
+        let changes = validate_escape_invariant(parent, workspace.path(), &snapshot)?;
+        if let Some(note) = changes.describe_timestamps() {
+            warn!("entries outside the workspace changed timestamps during extraction: {note}");
+        }
         let discarded = discard_unsafe_entries(&extracted)?;
         let commit = commit_output(input, &extracted, &archive_set.output_stem)?;
         let output = commit.path;
