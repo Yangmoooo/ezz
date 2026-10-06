@@ -50,14 +50,6 @@ pub enum ExtractionWarning {
     EngineWarnings {
         message: String,
     },
-    /// 从结果里剔除的平台元数据条目数（`__MACOSX`、`.DS_Store`）。
-    PlatformMetadataRemoved {
-        removed: usize,
-    },
-    /// 剔除平台元数据时出错：结果仍然有效，只是没清理干净。
-    PlatformMetadataRemovalFailed {
-        message: String,
-    },
     /// 剔除平台元数据后结果里什么都没剩下。
     EmptyAfterMetadataRemoval,
     /// 引擎报告数据损坏的条目：只报告，7-Zip 写出的内容照旧提交。
@@ -267,16 +259,15 @@ impl ExtractionWorkflow {
         };
 
         let mut warnings = Vec::new();
+        // 平台元数据清理只记日志：它不影响结果的有效性，不值得进通知。
         let removed_metadata = match remove_platform_metadata(&output) {
             Ok(0) => false,
             Ok(removed) => {
-                warnings.push(ExtractionWarning::PlatformMetadataRemoved { removed });
+                warn!("removed {removed} platform metadata entries from the result");
                 true
             }
             Err(error) => {
-                warnings.push(ExtractionWarning::PlatformMetadataRemovalFailed {
-                    message: error.to_string(),
-                });
+                warn!("could not remove platform metadata from the result: {error}");
                 false
             }
         };

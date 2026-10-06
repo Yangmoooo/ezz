@@ -26,7 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - macOS 和 Windows 使用各自原生桌面交互，核心解压行为由共享 Rust library 提供
 - 解压不再经过临时工作目录：结果目录先占名，7-Zip 直接写入最终路径（`-spe` 由引擎去掉重复的根目录层）
 - 结果总是落在以归档命名的目录里，冲突时递增序号（不再有“单文件落点”这一形态）
-- `__MACOSX` 与 `.DS_Store` 改为在结果里递归删除，并报告删除数量
+- `__MACOSX` 与 `.DS_Store` 改为在结果里递归删除（只记日志，不进通知）
 - 路径安全交给 7-Zip：ezz 不再逐条目丢弃不安全链接或特殊文件，也不再比较解压前后归档所在目录的条目
 
 ### Removed

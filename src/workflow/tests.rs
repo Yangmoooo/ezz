@@ -347,14 +347,8 @@ fn platform_metadata_is_removed_from_the_whole_result() {
     assert!(output.join("payload.txt").is_file());
     assert!(!output.join(".DS_Store").exists());
     assert!(!output.join("__MACOSX").exists());
-    assert!(
-        outcome.warnings.iter().any(|warning| matches!(
-            warning,
-            ExtractionWarning::PlatformMetadataRemoved { removed } if *removed == 2
-        )),
-        "the removal must be reported: {:?}",
-        outcome.warnings
-    );
+    // 清理只写日志，不进通知。
+    assert!(outcome.warnings.is_empty(), "{:?}", outcome.warnings);
 }
 
 #[cfg(unix)]
@@ -1004,7 +998,7 @@ fn symbolic_link_entries_do_not_fail_the_input() {
 
 #[test]
 #[ignore = "requires cargo xtask prepare"]
-fn archive_with_only_platform_metadata_is_a_reported_degraded_success() {
+fn archive_with_only_platform_metadata_yields_an_empty_result() {
     let seven_zip = prepared_seven_zip();
 
     let sandbox = tempfile::tempdir().expect("create test sandbox");
@@ -1029,14 +1023,6 @@ fn archive_with_only_platform_metadata_is_a_reported_degraded_success() {
             .count(),
         0,
         "the committed result must be empty"
-    );
-    assert!(
-        outcome.warnings.iter().any(|warning| matches!(
-            warning,
-            ExtractionWarning::PlatformMetadataRemoved { removed } if *removed == 2
-        )),
-        "the removal must be reported: {:?}",
-        outcome.warnings
     );
     assert!(
         outcome

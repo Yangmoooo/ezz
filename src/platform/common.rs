@@ -170,12 +170,6 @@ fn log_warning(warning: &ExtractionWarning) {
         ExtractionWarning::EngineWarnings { message } => {
             warn!("7-Zip reported warnings: {message}");
         }
-        ExtractionWarning::PlatformMetadataRemoved { removed } => {
-            warn!("removed {removed} platform metadata entries");
-        }
-        ExtractionWarning::PlatformMetadataRemovalFailed { message } => {
-            warn!("could not remove platform metadata: {message}");
-        }
         ExtractionWarning::EmptyAfterMetadataRemoval => {
             warn!("no content left after removing platform metadata");
         }
