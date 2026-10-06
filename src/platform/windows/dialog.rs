@@ -266,6 +266,7 @@ mod tests {
     use windows::Win32::UI::Controls::EM_GETPASSWORDCHAR;
     use windows::Win32::UI::WindowsAndMessaging::{
         EnumChildWindows, FindWindowW, GetClassNameW, GetDlgCtrlID, GetDlgItem, GetWindowTextW,
+        IsWindowVisible,
     };
     use windows::core::BOOL;
 
@@ -287,8 +288,11 @@ mod tests {
         }
     }
 
-    /// 等对话框出现**且控件已建好**：`FindWindowW` 连 `WM_INITDIALOG` 还没跑完的窗口也能
-    /// 找到，那种窗口一个子控件都没有。
+    /// 等对话框出现**且控件已建好**：对话框是资源模板，子控件按模板顺序逐个创建，而
+    /// `FindWindowW` 在第一个子控件还没建完时就能找到窗口。
+    ///
+    /// 所以等“可见”而不是等某个具体控件：对话框管理器建完所有子控件、跑完 `WM_INITDIALOG`
+    /// 之后才 ShowWindow，可见即完整，且不依赖模板里的控件顺序。
     fn wait_for_dialog() -> HWND {
         let title = super::super::wide("Password required");
         let deadline = Instant::now() + Duration::from_secs(10);
@@ -296,6 +300,7 @@ mod tests {
             // SAFETY: 标题是以 NUL 结尾的缓冲区，`window` 是本进程的窗口句柄。
             if let Ok(window) = unsafe { FindWindowW(None, PCWSTR(title.as_ptr())) }
                 && !window.0.is_null()
+                && unsafe { IsWindowVisible(window).as_bool() }
                 && unsafe { GetDlgItem(Some(window), super::super::ID_PASSWORD) }.is_ok()
             {
                 return window;
