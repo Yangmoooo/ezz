@@ -19,7 +19,9 @@ pub(super) fn detect_input_format(
 ) -> Result<(PathBuf, ArchiveScan, Option<tempfile::TempDir>), ExtractionError> {
     if let Some(embedded) = detect_steganographier(seven_zip, input)? {
         let scratch = tempfile::Builder::new()
-            .prefix(".ezz-tmp-")
+            .prefix(".ezz-")
+            // 4 位随机足够：同一目录里撞名概率可忽略，tempfile 撞了也会重试。
+            .rand_bytes(4)
             .tempdir_in(parent)
             .map_err(|error| {
                 super::file_system_error("create scratch directory for", input, error)
