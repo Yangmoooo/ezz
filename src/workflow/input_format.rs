@@ -1,18 +1,17 @@
 //! 输入格式探测：普通归档与 Steganographier。
 
 use std::ffi::OsStr;
-use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::{ExtractionError, file_system_error};
+use super::ExtractionError;
 use crate::seven_zip::{ArchiveScan, SevenZip};
 
 /// 探测输入格式，并准备好实际要解压的输入。
 ///
 /// 探测阶段已经为普通归档做过一次无密码扫描，直接复用它，调用方不必再扫。
 ///
-/// Steganographier 要先把内嵌归档切出来，所以会在这里建一个临时目录并返回它：临时目录必须
-/// 和归档在同一个卷（内嵌归档可能有上 GB），并且要活到解压结束。
+/// Steganographier 的内嵌归档必须先落到磁盘（第二次解压是另一次引擎调用，需要一个真实路径），
+/// 所以这里返回一个临时目录：它必须在视频所在卷上（载荷可能有上 GB），并活到解压结束。
 pub(super) fn detect_input_format(
     seven_zip: &SevenZip,
     input: &Path,
@@ -22,12 +21,10 @@ pub(super) fn detect_input_format(
         let scratch = tempfile::Builder::new()
             .prefix(".ezz-tmp-")
             .tempdir_in(parent)
-            .map_err(|error| file_system_error("create scratch directory for", input, error))?;
-        let prepared = scratch.path().join("prepared");
-        fs::create_dir(&prepared).map_err(|error| {
-            file_system_error("create special-format workspace", &prepared, error)
-        })?;
-        let archive = seven_zip.extract_embedded_archive(input, &prepared, &embedded)?;
+            .map_err(|error| {
+                super::file_system_error("create scratch directory for", input, error)
+            })?;
+        let archive = seven_zip.extract_embedded_archive(input, scratch.path(), &embedded)?;
         if !archive.is_file() {
             return Err(ExtractionError::UnsupportedInput(input.to_path_buf()));
         }
