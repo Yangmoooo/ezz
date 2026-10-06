@@ -96,7 +96,7 @@ jobs:
           printf 'packaged artifact check\n' > "$work/in/payload.txt"
           (cd "$work/in" && "$app/Contents/MacOS/7zz" a "$work/archive.zip" payload.txt)
           "$app/Contents/MacOS/ezz" "$work/archive.zip"
-          grep -q "packaged artifact check" "$work/payload.txt"
+          grep -q "packaged artifact check" "$work/archive/payload.txt"
           hdiutil detach "$mount"
 
       - name: Verify the packaged artifact (Windows)
@@ -136,7 +136,7 @@ jobs:
           printf 'packaged artifact check\n' > "$work/in/payload.txt"
           (cd "$work/in" && "$stage/7zz.exe" a "$work/archive.zip" payload.txt)
           "$stage/ezz.exe" "$(cygpath -w "$work/archive.zip")"
-          grep -q "packaged artifact check" "$work/payload.txt"
+          grep -q "packaged artifact check" "$work/archive/payload.txt"
 
       - name: Upload the packaged artifact
         uses: actions/upload-artifact@v6
