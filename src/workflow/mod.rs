@@ -4,8 +4,7 @@
 //!
 //! - `archive_set`：分卷归档的识别与完整性检查；
 //! - `input_format`：普通归档与 Steganographier 的探测；
-//! - `commit`：事务式提交、命名冲突、平台元数据；
-//! - `safety`：不可信条目的判据、不安全条目的丢弃、逃逸不变量。
+//! - `output`：结果目录的占用与平台元数据剔除。
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -14,20 +13,18 @@ use log::warn;
 use thiserror::Error;
 
 use crate::password_store::PasswordStore;
-use crate::seven_zip::{ArchiveScan, SevenZip};
+use crate::seven_zip::{ArchiveScan, ExtractionVerdict, SevenZip};
 
 mod archive_set;
-mod commit;
 mod input_format;
-pub(crate) mod safety;
+mod output;
 
 #[cfg(test)]
 mod tests;
 
 use archive_set::resolve_archive_set;
-use commit::commit_output;
 use input_format::detect_input_format;
-use safety::{directory_snapshot, discard_unsafe_entries, validate_escape_invariant};
+use output::{claim_output_directory, is_empty, remove_platform_metadata};
 
 /// 提取阶段连续报密码错的重试上限：没有上限时，没有任何密码能解开的包会让弹窗无限重现。
 const MAX_PASSWORD_RETRIES: u32 = 3;
@@ -49,22 +46,20 @@ pub enum ExtractionWarning {
         path: PathBuf,
         message: String,
     },
-    /// 7-Zip 以退出码 1（Warning）结束：结果已提交，但引擎报了警告。
+    /// 7-Zip 以退出码 1，或忽略危险链接的退出码 2 结束：结果已提交，但引擎报了警告。
     EngineWarnings {
         message: String,
     },
-    /// 被丢弃或消毒的条目。
-    ///
-    /// `sanitized`：路径被 7-Zip 重写进工作目录的条目，以及被降级成普通文件的危险链接。
-    /// `discarded`：没有进入提交结果的条目（逃逸或无法解析的链接、特殊文件）。
-    UnsafeEntriesSkipped {
-        discarded: Vec<PathBuf>,
-        sanitized: Vec<String>,
+    /// 从结果里剔除的平台元数据条目数（`__MACOSX`、`.DS_Store`）。
+    PlatformMetadataRemoved {
+        removed: usize,
     },
-    /// 剔除平台元数据后没有任何有效内容：提交的是一个空目录。
-    EmptyAfterMetadataRemoval {
-        removed: Vec<String>,
+    /// 剔除平台元数据时出错：结果仍然有效，只是没清理干净。
+    PlatformMetadataRemovalFailed {
+        message: String,
     },
+    /// 剔除平台元数据后结果里什么都没剩下。
+    EmptyAfterMetadataRemoval,
     /// 引擎报告数据损坏的条目：只报告，7-Zip 写出的内容照旧提交。
     FailedEntries {
         entries: Vec<String>,
@@ -121,9 +116,6 @@ pub enum ExtractionError {
         path: PathBuf,
         message: String,
     },
-
-    #[error("Unsafe extracted output at {path}: {reason}")]
-    UnsafeOutput { path: PathBuf, reason: String },
 }
 
 impl ExtractionError {
@@ -148,7 +140,6 @@ impl ExtractionError {
             Self::WrongPassword => "Wrong password",
             Self::PasswordRequired(_) => "No password provided",
             Self::FileSystem { .. } => "File system error",
-            Self::UnsafeOutput { .. } => "Extraction escaped its workspace",
         }
     }
 }
@@ -252,66 +243,45 @@ impl ExtractionWorkflow {
             path: input.to_path_buf(),
             message: "input has no parent directory".to_owned(),
         })?;
-        let workspace = tempfile::Builder::new()
-            .prefix(".ezz-work-")
-            .tempdir_in(parent)
-            .map_err(|error| file_system_error("create workspace for", input, error))?;
-        let extracted = workspace.path().join("extracted");
-        fs::create_dir(&extracted)
-            .map_err(|error| file_system_error("create extraction directory", &extracted, error))?;
-
-        let prepared = workspace.path().join("prepared");
-        let (archive_input, scan) = detect_input_format(&seven_zip, input, &prepared)?;
-
+        // 内嵌归档的临时目录要活到解压结束，所以绑在名字上而不是 `_`。
+        let (archive_input, scan, _scratch) = detect_input_format(&seven_zip, input, parent)?;
         let mut password =
             self.resolve_password(&seven_zip, &archive_input, &scan, &selected_input)?;
 
-        // 解压前后比较归档所在目录的条目快照；排除工作目录本身，否则它自己的改动会被当成逃逸。
-        let snapshot = directory_snapshot(parent, workspace.path())?;
-
-        let mut retries = 0;
-        let verdict = loop {
-            match seven_zip.extract(&archive_input, &extracted, &password.value) {
-                Ok(verdict) => break verdict,
-                // 混合加密归档：归一化为密码错误并重新弹窗。
-                Err(ExtractionError::WrongPassword) => {
-                    retries += 1;
-                    if retries > MAX_PASSWORD_RETRIES {
-                        warn!(
-                            "gave up after {retries} password attempts while extracting {}",
-                            archive_input.display()
-                        );
-                        return Err(ExtractionError::WrongPassword);
-                    }
-                    password = self.prompt_for_password(
-                        &seven_zip,
-                        &archive_input,
-                        &scan,
-                        &selected_input,
-                        true,
-                    )?;
-                }
-                Err(error) => return Err(error),
+        // 先把结果目录占下来：名字冲突在引擎开始写之前就解决了。
+        let output = claim_output_directory(parent, &archive_set.output_stem)?;
+        let verdict = match self.extract_with_retries(
+            &seven_zip,
+            &archive_input,
+            &output,
+            &scan,
+            &mut password,
+            &selected_input,
+        ) {
+            Ok(verdict) => verdict,
+            // 失败时不留下半成品：这个目录是刚建的，还没有提交。
+            Err(error) => {
+                let _ = fs::remove_dir_all(&output);
+                return Err(error);
             }
         };
 
-        let changes = validate_escape_invariant(parent, workspace.path(), &snapshot)?;
-        if let Some(note) = changes.describe_timestamps() {
-            warn!("entries outside the workspace changed timestamps during extraction: {note}");
-        }
-        let discarded = discard_unsafe_entries(&extracted)?;
-        let commit = commit_output(input, &extracted, &archive_set.output_stem)?;
-        let output = commit.path;
-        let sources = archive_set.sources;
         let mut warnings = Vec::new();
-
-        let mut sanitized = scan.sanitized;
-        sanitized.extend(verdict.sanitized_links);
-        if !discarded.is_empty() || !sanitized.is_empty() {
-            warnings.push(ExtractionWarning::UnsafeEntriesSkipped {
-                discarded,
-                sanitized,
-            });
+        let removed_metadata = match remove_platform_metadata(&output) {
+            Ok(0) => false,
+            Ok(removed) => {
+                warnings.push(ExtractionWarning::PlatformMetadataRemoved { removed });
+                true
+            }
+            Err(error) => {
+                warnings.push(ExtractionWarning::PlatformMetadataRemovalFailed {
+                    message: error.to_string(),
+                });
+                false
+            }
+        };
+        if removed_metadata && is_empty(&output)? {
+            warnings.push(ExtractionWarning::EmptyAfterMetadataRemoval);
         }
         if let Some(message) = verdict.engine_warning {
             warnings.push(ExtractionWarning::EngineWarnings { message });
@@ -319,11 +289,6 @@ impl ExtractionWorkflow {
         if !verdict.failed_entries.is_empty() {
             warnings.push(ExtractionWarning::FailedEntries {
                 entries: verdict.failed_entries,
-            });
-        }
-        if commit.empty {
-            warnings.push(ExtractionWarning::EmptyAfterMetadataRemoval {
-                removed: commit.removed_metadata,
             });
         }
         if password.remember
@@ -336,6 +301,7 @@ impl ExtractionWorkflow {
                 message,
             });
         }
+        let sources = archive_set.sources;
         if !password.keep_original
             && let Some(message) = self.source_cleaner.clean(&sources).err()
         {
@@ -347,6 +313,50 @@ impl ExtractionWorkflow {
             output,
             warnings,
         })
+    }
+
+    /// 解压到已经占下的结果目录，密码错误时重新要密码。
+    ///
+    /// 失败的结果目录由调用方清理（要么删掉，要么是在重试前由这里清空）。
+    fn extract_with_retries(
+        &self,
+        seven_zip: &SevenZip,
+        archive_input: &Path,
+        output: &Path,
+        scan: &ArchiveScan,
+        password: &mut ResolvedPassword,
+        selected_input: &Path,
+    ) -> Result<ExtractionVerdict, ExtractionError> {
+        let mut retries = 0;
+        loop {
+            match seven_zip.extract(archive_input, output, &password.value) {
+                Ok(verdict) => return Ok(verdict),
+                // 混合加密归档：归一化为密码错误并重新弹窗。
+                Err(ExtractionError::WrongPassword) => {
+                    retries += 1;
+                    if retries > MAX_PASSWORD_RETRIES {
+                        warn!(
+                            "gave up after {retries} password attempts while extracting {}",
+                            archive_input.display()
+                        );
+                        return Err(ExtractionError::WrongPassword);
+                    }
+                    // 上一次尝试可能已经写进去了一些东西：清空，否则它会留在最终结果里。
+                    let _ = fs::remove_dir_all(output);
+                    fs::create_dir(output).map_err(|error| {
+                        file_system_error("recreate result directory", output, error)
+                    })?;
+                    *password = self.prompt_for_password(
+                        seven_zip,
+                        archive_input,
+                        scan,
+                        selected_input,
+                        true,
+                    )?;
+                }
+                Err(error) => return Err(error),
+            }
+        }
     }
 
     /// 决定本次要用哪个密码。

@@ -170,21 +170,15 @@ fn log_warning(warning: &ExtractionWarning) {
         ExtractionWarning::EngineWarnings { message } => {
             warn!("7-Zip reported warnings: {message}");
         }
-        ExtractionWarning::UnsafeEntriesSkipped {
-            discarded,
-            sanitized,
-        } => {
-            for path in discarded {
-                warn!("discarded unsafe entry {}", path.display());
-            }
-            for name in sanitized {
-                warn!("sanitized unsafe entry path {name}");
-            }
+        ExtractionWarning::PlatformMetadataRemoved { removed } => {
+            warn!("removed {removed} platform metadata entries");
         }
-        ExtractionWarning::EmptyAfterMetadataRemoval { removed } => warn!(
-            "no content left after removing platform metadata ({})",
-            removed.join(", ")
-        ),
+        ExtractionWarning::PlatformMetadataRemovalFailed { message } => {
+            warn!("could not remove platform metadata: {message}");
+        }
+        ExtractionWarning::EmptyAfterMetadataRemoval => {
+            warn!("no content left after removing platform metadata");
+        }
         ExtractionWarning::FailedEntries { entries } => {
             for entry in entries {
                 warn!("entry failed to extract (data corruption): {entry}");
@@ -270,10 +264,6 @@ mod tests {
                 operation: "commit",
                 path: PathBuf::from("a"),
                 message: "denied".to_owned(),
-            },
-            ExtractionError::UnsafeOutput {
-                path: PathBuf::from("a"),
-                reason: "escaped".to_owned(),
             },
         ];
 

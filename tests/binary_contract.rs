@@ -101,13 +101,13 @@ fn multiple_inputs_are_processed_and_a_failed_one_does_not_stop_the_rest() {
     let status = run_ezz(&engine, sandbox.path(), &[&first, &missing, &second]);
 
     assert_eq!(status.code(), Some(1), "任一输入失败 → 退出码 1");
-    // 两个成功输入都必须提交：单顶层文件直接提交，第二个因重名而递增序号。
+    // 两个成功输入都必须提交，各自落在以归档命名的目录里。
     assert!(
-        sandbox.path().join("payload.txt").is_file(),
+        sandbox.path().join("first/payload.txt").is_file(),
         "the first input must be committed"
     );
     assert!(
-        sandbox.path().join("payload (1).txt").is_file(),
+        sandbox.path().join("second/payload.txt").is_file(),
         "an input after a failed one must still be committed"
     );
     // 成功的原归档被清理，失败的那次没有碰过任何东西。
@@ -142,7 +142,7 @@ fn a_call_is_skipped_while_another_ezz_holds_the_lock() {
     assert_eq!(status.code(), Some(0), "被跳过不是失败");
     assert!(archive.is_file(), "被跳过时不得清理原归档");
     assert!(
-        !sandbox.path().join("payload.txt").exists(),
+        !sandbox.path().join("payload.txt").exists() && !sandbox.path().join("locked").exists(),
         "被跳过时不得产生任何输出"
     );
 
@@ -177,7 +177,7 @@ fn an_abandoned_lock_is_acquired_by_the_next_call() {
 
     assert_eq!(status.code(), Some(0), "WAIT_ABANDONED 必须视为已获得");
     assert!(
-        sandbox.path().join("payload.txt").is_file(),
+        sandbox.path().join("abandoned/payload.txt").is_file(),
         "取得 abandoned 锁之后必须正常提取"
     );
     assert!(

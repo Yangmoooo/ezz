@@ -2,7 +2,6 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Output;
 
-use crate::workflow::safety::{is_safe_relative_path, is_unsafe_archive_path};
 use crate::workflow::{EngineOperation, ExtractionError};
 
 pub(crate) struct SevenZip {
@@ -62,7 +61,6 @@ impl SevenZip {
                     header_encrypted: true,
                     encrypted: true,
                     sample_entry: None,
-                    sanitized: Vec::new(),
                 });
             }
             return Err(ExtractionError::WrongPassword);
@@ -224,18 +222,13 @@ pub(crate) struct ArchiveScan {
     pub(crate) encrypted: bool,
     /// 用于最小化校验的条目：优先取声明加密的、最小的非空文件条目。
     pub(crate) sample_entry: Option<String>,
-    /// 路径需要消毒的条目（`..`、绝对路径、盘符前缀）：7-Zip 会把它们重写进工作目录，
-    /// 数据保留但必须报告。
-    pub(crate) sanitized: Vec<String>,
 }
 
 /// 一次提取的结局。
 #[derive(Debug, Default)]
 pub(crate) struct ExtractionVerdict {
-    /// 退出码 1：引擎报了警告，但结果有效。内容是引擎消息。
+    /// 退出码 1，或退出码 2 里 7-Zip 忽略了危险链接：结果有效，内容是引擎消息。
     pub(crate) engine_warning: Option<String>,
-    /// 被引擎消毒的链接条目：危险目标的链接被 7-Zip 降级成普通文件。
-    pub(crate) sanitized_links: Vec<String>,
     /// 引擎报告数据损坏（`CRC Failed` / `Data Error`）的条目。
     ///
     /// 这类条目仍会被写进输出，这里只负责报告。
@@ -254,10 +247,11 @@ fn classify(exit_code: Option<i32>, message: &str) -> Option<ExtractionVerdict> 
             ..ExtractionVerdict::default()
         }),
         Some(2) => {
-            tolerated_exit_two(message).map(|(sanitized_links, failed_entries)| ExtractionVerdict {
-                sanitized_links,
+            let (ignored_links, failed_entries) = tolerated_exit_two(message)?;
+            Some(ExtractionVerdict {
+                // 被降级的链接条目只在引擎消息里点名，原样透传。
+                engine_warning: ignored_links.then(|| message.to_owned()),
                 failed_entries,
-                ..ExtractionVerdict::default()
             })
         }
         _ => None,
@@ -271,9 +265,9 @@ fn classify(exit_code: Option<i32>, message: &str) -> Option<ExtractionVerdict> 
 /// - `ERROR: CRC Failed : <条目>` / `ERROR: Data Error : <条目>`。
 ///
 /// 其它错误行（例如 `ERROR: Data Error in encrypted file. Wrong password?`，它的冒号不在
-/// 前缀之后）都不降级。
-fn tolerated_exit_two(message: &str) -> Option<(Vec<String>, Vec<String>)> {
-    let mut sanitized = Vec::new();
+/// 前缀之后）都不降级。返回值里的布尔表示是否出现过被忽略的链接（它的报告只走引擎消息）。
+fn tolerated_exit_two(message: &str) -> Option<(bool, Vec<String>)> {
+    let mut ignored_links = false;
     let mut failed = Vec::new();
     let mut saw_error = false;
 
@@ -285,8 +279,8 @@ fn tolerated_exit_two(message: &str) -> Option<(Vec<String>, Vec<String>)> {
         saw_error = true;
 
         // 前缀不匹配时 `entry_after` 返回 `None`，所以这里不能直接用 `?`。
-        if let Some(entry) = entry_after(line, "ERROR: Dangerous link path was ignored") {
-            sanitized.push(entry);
+        if entry_after(line, "ERROR: Dangerous link path was ignored").is_some() {
+            ignored_links = true;
             continue;
         }
         if let Some(entry) = entry_after(line, "ERROR: CRC Failed") {
@@ -300,7 +294,7 @@ fn tolerated_exit_two(message: &str) -> Option<(Vec<String>, Vec<String>)> {
         return None;
     }
 
-    saw_error.then_some((sanitized, failed))
+    saw_error.then_some((ignored_links, failed))
 }
 
 /// 取出 `ERROR: <前缀> : <条目>[ : <额外>]` 里的条目名。
@@ -353,9 +347,6 @@ fn parse_listing(listing: &str) -> ArchiveScan {
 
         if let Some(value) = line.strip_prefix("Path = ") {
             is_folder |= value.ends_with(['/', '\\']);
-            if is_unsafe_archive_path(value) {
-                scan.sanitized.push(value.to_owned());
-            }
             path = Some(value.to_owned());
         } else if let Some(value) = line.strip_prefix("Size = ") {
             size = value.parse().unwrap_or(0);
@@ -405,6 +396,14 @@ fn find_embedded_archive(output: &str) -> Option<PathBuf> {
     None
 }
 
+/// 内嵌归档的路径是否是一个安全的相对路径（全部是普通段）。
+fn is_safe_relative_path(path: &Path) -> bool {
+    !path.as_os_str().is_empty()
+        && path
+            .components()
+            .all(|component| matches!(component, std::path::Component::Normal(_)))
+}
+
 fn is_supported_embedded_type(archive_type: &str) -> bool {
     matches!(
         archive_type.to_ascii_lowercase().as_str(),
@@ -449,17 +448,15 @@ mod tests {
             verdict.engine_warning.as_deref(),
             Some("something to report")
         );
-        assert!(verdict.sanitized_links.is_empty());
         assert!(verdict.failed_entries.is_empty());
     }
 
     #[test]
-    fn exit_code_two_with_only_ignored_links_is_accepted_and_named() {
+    fn exit_code_two_with_only_ignored_links_is_accepted_with_the_engine_message() {
         let message = "ERROR: Dangerous link path was ignored : escape-link : ..\\outside.txt";
         let verdict = classify(Some(2), message).expect("a degraded success");
-        assert!(verdict.engine_warning.is_none());
+        assert_eq!(verdict.engine_warning.as_deref(), Some(message));
         assert!(verdict.failed_entries.is_empty());
-        assert_eq!(verdict.sanitized_links, vec!["escape-link".to_owned()]);
     }
 
     #[test]
@@ -467,7 +464,6 @@ mod tests {
         let message = "ERROR: CRC Failed : bad.txt\nERROR: Data Error : nested/bad2.txt\n";
         let verdict = classify(Some(2), message).expect("a degraded success");
         assert!(verdict.engine_warning.is_none());
-        assert!(verdict.sanitized_links.is_empty());
         assert_eq!(
             verdict.failed_entries,
             vec!["bad.txt".to_owned(), "nested/bad2.txt".to_owned()]
@@ -499,14 +495,13 @@ mod tests {
     }
 
     #[test]
-    fn listed_paths_that_need_sanitizing_are_reported() {
-        let listing = "Path = ..\\evil.txt\nSize = 9\nAttributes = A\n\nPath = fine.txt\nSize = 3\nAttributes = A\n\n";
+    fn listing_reports_encryption_and_the_smallest_encrypted_sample() {
+        let listing = "Path = big.bin\nSize = 90\nAttributes = A\nEncrypted = +\n\nPath = small.bin\nSize = 9\nAttributes = A\nEncrypted = +\n\nPath = plain.txt\nSize = 3\nAttributes = A\n\n";
         let scan = parse_listing(listing);
 
-        assert_eq!(scan.sanitized, vec!["..\\evil.txt".to_owned()]);
-        assert!(!scan.encrypted);
+        assert!(scan.encrypted);
         assert!(!scan.header_encrypted);
-        assert_eq!(scan.sample_entry.as_deref(), Some("fine.txt"));
+        assert_eq!(scan.sample_entry.as_deref(), Some("small.bin"));
     }
 
     #[test]
@@ -548,10 +543,10 @@ mod tests {
     }
 
     #[test]
-    fn every_ignored_link_is_named() {
+    fn ignored_links_in_an_exit_two_message_are_recognised() {
         let message = "ERROR: Dangerous link path was ignored : first : ../a\nERROR: Dangerous link path was ignored : dir/second : C:\\b\n";
-        let (sanitized, failed) = tolerated_exit_two(message).expect("tolerated exit code 2");
-        assert_eq!(sanitized, vec!["first".to_owned(), "dir/second".to_owned()]);
+        let (ignored_links, failed) = tolerated_exit_two(message).expect("tolerated exit code 2");
+        assert!(ignored_links);
         assert!(failed.is_empty());
     }
 }

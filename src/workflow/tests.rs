@@ -100,7 +100,7 @@ fn workflow_with_store(
 
 #[test]
 #[ignore = "requires cargo xtask prepare"]
-fn real_archive_extracts_and_commits_its_single_top_level_file() {
+fn real_archive_extracts_into_a_directory_named_after_the_archive() {
     let seven_zip = prepared_seven_zip();
 
     let sandbox = tempfile::tempdir().expect("create test sandbox");
@@ -115,16 +115,17 @@ fn real_archive_extracts_and_commits_its_single_top_level_file() {
         .extract(&archive)
         .expect("extract archive");
 
+    let output = sandbox.path().join("archive");
     assert_eq!(
         outcome,
         ExtractionOutcome {
             input: archive.clone(),
-            output: payload.clone(),
+            output: output.clone(),
             warnings: Vec::new(),
         }
     );
     assert_eq!(
-        std::fs::read(&payload).expect("read extracted payload"),
+        std::fs::read(output.join("payload.txt")).expect("read extracted payload"),
         b"ezz v3 payload"
     );
     assert!(
@@ -156,7 +157,10 @@ fn cleanup_failure_is_reported_as_a_success_warning() {
             message: "cleanup unavailable".to_owned(),
         }]
     );
-    assert!(payload.is_file(), "extracted output must stay committed");
+    assert!(
+        sandbox.path().join("archive/payload.txt").is_file(),
+        "extracted output must stay committed"
+    );
     assert!(archive.is_file(), "failed cleanup must preserve the source");
 }
 
@@ -239,7 +243,7 @@ fn multiple_top_level_entries_are_committed_in_an_archive_named_directory() {
 
 #[test]
 #[ignore = "requires cargo xtask prepare"]
-fn existing_file_is_preserved_and_new_output_gets_a_sequence_suffix() {
+fn an_existing_file_named_like_the_archive_forces_a_sequence_suffix() {
     let seven_zip = prepared_seven_zip();
 
     let sandbox = tempfile::tempdir().expect("create test sandbox");
@@ -247,16 +251,24 @@ fn existing_file_is_preserved_and_new_output_gets_a_sequence_suffix() {
     let archive = sandbox.path().join("archive.7z");
     std::fs::write(&payload, b"new content").expect("create payload");
     create_archive(&seven_zip, sandbox.path(), &archive, &["payload.txt"]);
-    std::fs::write(&payload, b"existing content").expect("replace existing payload");
+    std::fs::remove_file(&payload).expect("remove source payload");
+    std::fs::write(sandbox.path().join("archive"), b"existing content")
+        .expect("create existing file");
 
     let outcome = workflow(&seven_zip)
         .extract(&archive)
         .expect("extract archive without overwriting");
 
-    let sequenced = sandbox.path().join("payload (1).txt");
+    let sequenced = sandbox.path().join("archive (1)");
     assert_eq!(outcome.output, sequenced);
-    assert_eq!(std::fs::read(&payload).unwrap(), b"existing content");
-    assert_eq!(std::fs::read(&sequenced).unwrap(), b"new content");
+    assert_eq!(
+        std::fs::read(sandbox.path().join("archive")).unwrap(),
+        b"existing content"
+    );
+    assert_eq!(
+        std::fs::read(sequenced.join("payload.txt")).unwrap(),
+        b"new content"
+    );
 }
 
 #[test]
@@ -304,7 +316,7 @@ fn existing_directory_is_preserved_and_new_output_directory_gets_a_sequence_suff
 
 #[test]
 #[ignore = "requires cargo xtask prepare"]
-fn platform_metadata_does_not_change_the_top_level_layout() {
+fn platform_metadata_is_removed_from_the_whole_result() {
     let seven_zip = prepared_seven_zip();
 
     let sandbox = tempfile::tempdir().expect("create test sandbox");
@@ -330,16 +342,25 @@ fn platform_metadata_does_not_change_the_top_level_layout() {
         .extract(&archive)
         .expect("extract archive");
 
-    assert_eq!(outcome.output, payload);
-    assert!(!sandbox.path().join(".DS_Store").exists());
-    assert!(!sandbox.path().join("__MACOSX").exists());
-    assert!(!sandbox.path().join("archive").exists());
+    let output = sandbox.path().join("archive");
+    assert_eq!(outcome.output, output);
+    assert!(output.join("payload.txt").is_file());
+    assert!(!output.join(".DS_Store").exists());
+    assert!(!output.join("__MACOSX").exists());
+    assert!(
+        outcome.warnings.iter().any(|warning| matches!(
+            warning,
+            ExtractionWarning::PlatformMetadataRemoved { removed } if *removed == 2
+        )),
+        "the removal must be reported: {:?}",
+        outcome.warnings
+    );
 }
 
 #[cfg(unix)]
 #[test]
 #[ignore = "requires cargo xtask prepare"]
-fn symbolic_link_that_escapes_the_result_is_sanitized_and_reported() {
+fn an_escaping_link_is_left_to_the_engine_and_reported_as_a_warning() {
     use std::os::unix::fs::symlink;
 
     let seven_zip = prepared_seven_zip();
@@ -361,24 +382,18 @@ fn symbolic_link_that_escapes_the_result_is_sanitized_and_reported() {
         .extract(&archive)
         .expect("an escaping link must not fail the whole input");
 
+    // 7-Zip 自己拒绝危险链接（降级成普通文件并结束于退出码 2），ezz 只把它的消息登记下来。
     let reported = outcome
         .warnings
         .iter()
         .find_map(|warning| match warning {
-            ExtractionWarning::UnsafeEntriesSkipped {
-                discarded,
-                sanitized,
-            } => Some((discarded, sanitized)),
+            ExtractionWarning::EngineWarnings { message } => Some(message),
             _ => None,
         })
-        .expect("the sanitized entry must be reported");
-    // 引擎留下的占位普通文件照常提交，只登记为“消毒”。
-    assert!(
-        reported.1.iter().any(|entry| entry.contains("escape")),
-        "the escaping entry must be reported as sanitized: {reported:?}"
-    );
-    let committed =
-        std::fs::symlink_metadata(&outcome.output).expect("the sanitized entry must be committed");
+        .expect("the engine message must be reported");
+    assert!(reported.contains("escape"), "{reported}");
+    let committed = std::fs::symlink_metadata(outcome.output.join("escape"))
+        .expect("the degraded entry must be committed");
     assert!(
         committed.file_type().is_file(),
         "the committed entry must be a regular file, not a link"
@@ -391,48 +406,40 @@ fn symbolic_link_that_escapes_the_result_is_sanitized_and_reported() {
 
 #[test]
 #[ignore = "requires cargo xtask prepare"]
-fn parent_directory_entry_is_sanitized_and_reported() {
+fn a_parent_directory_entry_lands_next_to_the_result() {
     let seven_zip = prepared_seven_zip();
 
     let sandbox = tempfile::tempdir().expect("create test sandbox");
     let archive = sandbox.path().join("unsafe.zip");
     let escaped_name = format!("ezz-escaped-{}.txt", std::process::id());
-    let escaped = sandbox
-        .path()
-        .parent()
-        .expect("sandbox parent")
-        .join(&escaped_name);
     write_zip(
         &archive,
         &[(&format!("../{escaped_name}"), b"must not escape")],
     );
 
-    // 路径需要消毒的条目保留（数据不得丢失），但必须报告。
+    // 7-Zip 自己去掉了 `..`（条目留在结果内，名字保留）。ezz 不纠正，也不因此失败。
     let outcome = workflow(&seven_zip)
         .extract(&archive)
-        .expect("a sanitized path must not fail the whole input");
+        .expect("a rewritten entry must not fail the whole input");
 
-    assert!(
-        !escaped.exists(),
-        "archive entry must not escape the workspace"
-    );
-    assert!(
-        outcome.warnings.iter().any(|warning| matches!(
-            warning,
-            ExtractionWarning::UnsafeEntriesSkipped { sanitized, .. }
-                if sanitized.iter().any(|entry| entry.contains(&escaped_name))
-        )),
-        "the sanitized entry must be named in the report: {:?}",
-        outcome.warnings
-    );
     assert_eq!(
-        outcome.output,
-        sandbox.path().join(&escaped_name),
-        "the sanitized entry must be committed inside the archive directory"
-    );
-    assert_eq!(
-        std::fs::read_to_string(&outcome.output).expect("read committed entry"),
+        std::fs::read_to_string(outcome.output.join(&escaped_name)).expect("read rewritten entry"),
         "must not escape"
+    );
+    let mut next_to_result = Vec::new();
+    for entry in std::fs::read_dir(sandbox.path()).expect("read archive directory") {
+        let name = entry
+            .expect("directory entry")
+            .file_name()
+            .to_string_lossy()
+            .into_owned();
+        if name != "unsafe" && name != "unsafe.zip" {
+            next_to_result.push(name);
+        }
+    }
+    assert!(
+        next_to_result.is_empty(),
+        "nothing may land next to the result: {next_to_result:?}"
     );
 }
 
@@ -463,7 +470,10 @@ fn encrypted_archive_uses_prompted_password_and_honors_keep_source() {
         .extract(&archive)
         .expect("extract encrypted archive");
 
-    assert_eq!(std::fs::read(&payload).unwrap(), b"classified");
+    assert_eq!(
+        std::fs::read(outcome.output.join("secret.txt")).unwrap(),
+        b"classified"
+    );
     assert!(archive.is_file(), "keep source must preserve the archive");
     assert!(outcome.warnings.is_empty(), "cleaner must not be called");
 }
@@ -495,8 +505,11 @@ fn content_encrypted_archive_uses_the_prompted_password() {
         .extract(&archive)
         .expect("extract content-encrypted archive");
 
-    assert_eq!(outcome.output, payload);
-    assert_eq!(std::fs::read(&payload).unwrap(), b"encrypted content");
+    assert_eq!(outcome.output, sandbox.path().join("content-encrypted"));
+    assert_eq!(
+        std::fs::read(outcome.output.join("visible-name.txt")).unwrap(),
+        b"encrypted content"
+    );
     assert!(
         !archive.exists(),
         "successful extraction must clean the source"
@@ -533,11 +546,14 @@ fn password_prompt_can_retry_after_an_incorrect_password() {
         },
     ]);
 
-    workflow_with(&seven_zip, RemoveSource, prompt)
+    let outcome = workflow_with(&seven_zip, RemoveSource, prompt)
         .extract(&archive)
         .expect("retry with the correct password");
 
-    assert_eq!(std::fs::read(&payload).unwrap(), b"classified");
+    assert_eq!(
+        std::fs::read(outcome.output.join("secret.txt")).unwrap(),
+        b"classified"
+    );
     assert!(!archive.exists(), "successful retry must clean the source");
 }
 
@@ -570,6 +586,11 @@ fn cancelling_the_password_prompt_preserves_the_archive() {
         !payload.exists(),
         "cancelled archive must not commit output"
     );
+    assert_eq!(
+        std::fs::read_dir(sandbox.path()).unwrap().count(),
+        1,
+        "a cancelled extraction must not leave a result directory behind"
+    );
 }
 
 #[test]
@@ -596,9 +617,10 @@ fn remembered_password_is_used_for_the_next_archive() {
         remember: true,
         keep_original: false,
     }]);
-    workflow_with_store(&seven_zip, RemoveSource, first_prompt, &password_store)
-        .extract(&first_archive)
-        .expect("extract and remember first password");
+    let first_outcome =
+        workflow_with_store(&seven_zip, RemoveSource, first_prompt, &password_store)
+            .extract(&first_archive)
+            .expect("extract and remember first password");
 
     let second_payload = sandbox.path().join("second-secret.txt");
     let second_archive = sandbox.path().join("second.7z");
@@ -612,12 +634,19 @@ fn remembered_password_is_used_for_the_next_archive() {
     );
     std::fs::remove_file(&second_payload).expect("remove second source payload");
 
-    workflow_with_store(&seven_zip, RemoveSource, NoResponsePrompt, &password_store)
-        .extract(&second_archive)
-        .expect("reuse remembered password without a prompt");
+    let second_outcome =
+        workflow_with_store(&seven_zip, RemoveSource, NoResponsePrompt, &password_store)
+            .extract(&second_archive)
+            .expect("reuse remembered password without a prompt");
 
-    assert_eq!(std::fs::read(&first_payload).unwrap(), b"first secret");
-    assert_eq!(std::fs::read(&second_payload).unwrap(), b"second secret");
+    assert_eq!(
+        std::fs::read(first_outcome.output.join("first-secret.txt")).unwrap(),
+        b"first secret"
+    );
+    assert_eq!(
+        std::fs::read(second_outcome.output.join("second-secret.txt")).unwrap(),
+        b"second secret"
+    );
     assert!(
         password_store.is_file(),
         "remembered password must be persisted"
@@ -645,8 +674,11 @@ fn numeric_volume_input_finds_the_first_volume_and_cleans_the_complete_set() {
         .extract(&second_volume)
         .expect("extract from a non-first numeric volume");
 
-    assert_eq!(outcome.output, payload);
-    assert_eq!(std::fs::read(&payload).unwrap(), vec![0x5a; 8 * 1024]);
+    assert_eq!(outcome.output, sandbox.path().join("bundle"));
+    assert_eq!(
+        std::fs::read(outcome.output.join("payload.bin")).unwrap(),
+        vec![0x5a; 8 * 1024]
+    );
     assert!(
         !sandbox.path().join("bundle.7z.001").exists(),
         "first volume must be cleaned"
@@ -717,8 +749,11 @@ fn steganographier_mp4_extracts_its_embedded_zip() {
         .extract(&video)
         .expect("extract Steganographier MP4");
 
-    assert_eq!(outcome.output, payload);
-    assert_eq!(std::fs::read(&payload).unwrap(), b"hidden payload");
+    assert_eq!(outcome.output, sandbox.path().join("carrier"));
+    assert_eq!(
+        std::fs::read(outcome.output.join("hidden.txt")).unwrap(),
+        b"hidden payload"
+    );
     assert!(
         !video.exists(),
         "successful extraction must clean the video"
@@ -764,8 +799,11 @@ fn archive_with_an_mp4_extension_is_detected_by_content() {
         .extract(&archive)
         .expect("extract renamed ZIP");
 
-    assert_eq!(outcome.output, payload);
-    assert_eq!(std::fs::read(&payload).unwrap(), b"renamed archive");
+    assert_eq!(outcome.output, sandbox.path().join("renamed"));
+    assert_eq!(
+        std::fs::read(outcome.output.join("renamed.txt")).unwrap(),
+        b"renamed archive"
+    );
     assert!(
         !archive.exists(),
         "successful extraction must clean the source"
@@ -796,13 +834,18 @@ fn tar_gzip_and_xz_archives_extract_through_the_shared_workflow() {
             .extract(&archive)
             .expect("extract archive format");
 
-        let expected_output = if archive_type == "xz" {
-            sandbox.path().join("archive")
+        let output = sandbox.path().join("archive");
+        assert_eq!(outcome.output, output);
+        // 单文件流没有条目名，7-Zip 用归档名当文件名。
+        let entry = if archive_type == "xz" {
+            "archive".to_owned()
         } else {
-            payload
+            format!("payload-{archive_type}.txt")
         };
-        assert_eq!(outcome.output, expected_output);
-        assert_eq!(std::fs::read_to_string(&expected_output).unwrap(), content);
+        assert_eq!(
+            std::fs::read_to_string(output.join(entry)).unwrap(),
+            content
+        );
         assert!(
             !archive.exists(),
             "successful extraction must clean the source"
@@ -832,8 +875,11 @@ fn steganographier_mkv_extracts_its_embedded_zip() {
         .extract(&video)
         .expect("extract Steganographier MKV");
 
-    assert_eq!(outcome.output, payload);
-    assert_eq!(std::fs::read(&payload).unwrap(), b"MKV hidden payload");
+    assert_eq!(outcome.output, sandbox.path().join("carrier"));
+    assert_eq!(
+        std::fs::read(outcome.output.join("mkv-hidden.txt")).unwrap(),
+        b"MKV hidden payload"
+    );
     assert!(
         !video.exists(),
         "successful extraction must clean the video"
@@ -859,9 +905,10 @@ fn rar_non_first_volume_extracts_and_cleans_the_complete_set() {
         .extract(&volumes[1])
         .expect("extract from second RAR volume");
 
-    let output = sandbox.path().join("LibarchiveAddingTest.html");
+    let output = sandbox.path().join("rar-multivolume");
     assert_eq!(outcome.output, output);
-    let content = std::fs::read(&output).expect("read extracted RAR content");
+    let content = std::fs::read(output.join("LibarchiveAddingTest.html"))
+        .expect("read extracted RAR content");
     assert_eq!(content.len(), 20_111);
     assert!(content.ends_with(b"</BODY>\n</HTML>"));
     assert!(
@@ -886,9 +933,10 @@ fn zip_non_first_volume_extracts_and_cleans_the_complete_set() {
         .extract(&first)
         .expect("extract from first ZIP split volume");
 
-    let output = sandbox.path().join("zip-volume-payload.txt");
+    let output = sandbox.path().join("zip-multivolume");
     assert_eq!(outcome.output, output);
-    let content = std::fs::read(&output).expect("read extracted ZIP content");
+    let content =
+        std::fs::read(output.join("zip-volume-payload.txt")).expect("read extracted ZIP content");
     assert_eq!(content.len(), 70_000);
     assert!(content.starts_with(b"ezz zip volume payload\n"));
     assert!(!first.exists(), "first ZIP volume must be cleaned");
@@ -922,27 +970,13 @@ fn symbolic_link_entries_do_not_fail_the_input() {
         .extract(&archive)
         .expect("symbolic links must not fail the whole input");
 
-    let reported = outcome
-        .warnings
-        .iter()
-        .find_map(|warning| match warning {
-            ExtractionWarning::UnsafeEntriesSkipped {
-                discarded,
-                sanitized,
-            } => Some((discarded, sanitized)),
-            _ => None,
-        })
-        .expect("the escaping link must be reported");
-    assert!(
-        reported
-            .0
-            .iter()
-            .any(|path| path.to_string_lossy().contains("escape-link"))
-            || reported.1.iter().any(|name| name.contains("escape-link")),
-        "the escaping link must be named: discarded={:?} sanitized={:?}",
-        reported.0,
-        reported.1
-    );
+    let reported = outcome.warnings.iter().find_map(|warning| match warning {
+        ExtractionWarning::EngineWarnings { message } => Some(message),
+        _ => None,
+    });
+    if let Some(message) = reported {
+        assert!(message.contains("escape-link"), "{message}");
+    }
 
     let committed_escape = outcome.output.join("escape-link");
     if committed_escape.exists() {
@@ -999,8 +1033,16 @@ fn archive_with_only_platform_metadata_is_a_reported_degraded_success() {
     assert!(
         outcome.warnings.iter().any(|warning| matches!(
             warning,
-            ExtractionWarning::EmptyAfterMetadataRemoval { removed } if !removed.is_empty()
+            ExtractionWarning::PlatformMetadataRemoved { removed } if *removed == 2
         )),
+        "the removal must be reported: {:?}",
+        outcome.warnings
+    );
+    assert!(
+        outcome
+            .warnings
+            .iter()
+            .any(|warning| matches!(warning, ExtractionWarning::EmptyAfterMetadataRemoval)),
         "the empty result must be reported: {:?}",
         outcome.warnings
     );
@@ -1028,13 +1070,13 @@ fn write_tar(path: &Path, entries: &[(&str, &[u8])]) {
     std::fs::write(path, &bytes).expect("write tar");
 }
 
-/// 盘符前缀条目（`C:\drive.txt`）：7-Zip 读取时把它改写成 `C:_drive.txt`，提取时再把非法
-/// 字符换成 `_`。
+/// 盘符前缀条目（`C:\drive.txt`）：7-Zip 在读取时就把名字重写成 `C:_drive.txt`，解压时再把
+/// 非法字符换成 `_`，于是结果里叫 `C_drive.txt`。ezz 不纠正。
 ///
 /// 手写 tar 而不是 zip：`zip` crate 会在写入时就把反斜杠换成下划线，造不出真的盘符条目。
 #[test]
 #[ignore = "requires cargo xtask prepare"]
-fn drive_prefixed_entries_are_sanitized_and_reported() {
+fn drive_prefixed_entries_are_rewritten_by_the_engine() {
     let seven_zip = prepared_seven_zip();
 
     let sandbox = tempfile::tempdir().expect("create test sandbox");
@@ -1048,38 +1090,24 @@ fn drive_prefixed_entries_are_sanitized_and_reported() {
         .extract(&archive)
         .expect("a drive-prefixed entry must not fail the whole input");
 
-    let sanitized = outcome
-        .warnings
-        .iter()
-        .find_map(|warning| match warning {
-            ExtractionWarning::UnsafeEntriesSkipped { sanitized, .. } => Some(sanitized),
-            _ => None,
-        })
-        .expect("the drive-prefixed entry must be reported");
-    assert!(
-        sanitized.iter().any(|name| name.contains("drive.txt")),
-        "the entry must be named in the report: {sanitized:?}"
-    );
-
-    // 数据不得丢失：必须落在结果内。
-    assert!(outcome.output.is_dir(), "{:?}", outcome.output);
-    let mut found_payload = false;
+    // 名字由 7-Zip 决定（读取时重写、解压时再换非法字符），这里只要求数据不丢失。
+    let mut found = false;
     for entry in std::fs::read_dir(&outcome.output).expect("read result") {
         let entry = entry.expect("result entry");
         if entry.file_type().expect("file type").is_file()
             && std::fs::read(entry.path()).expect("read entry") == b"drive payload"
         {
-            found_payload = true;
+            found = true;
         }
     }
-    assert!(found_payload, "the sanitized entry must keep its data");
+    assert!(found, "the drive-prefixed entry must keep its data");
     assert!(outcome.output.join("keep.txt").is_file());
 }
 
-/// 绝对路径条目（`/absolute.txt`）：7-Zip 把它重写进工作目录（提交后为 `absolute.txt`）。
+/// 绝对路径条目（`/absolute.txt`）：7-Zip 自己把它收进结果，ezz 不纠正。
 #[test]
 #[ignore = "requires cargo xtask prepare"]
-fn absolute_path_entries_are_sanitized_and_reported() {
+fn absolute_path_entries_stay_inside_the_result() {
     let seven_zip = prepared_seven_zip();
 
     let sandbox = tempfile::tempdir().expect("create test sandbox");
@@ -1096,25 +1124,31 @@ fn absolute_path_entries_are_sanitized_and_reported() {
         .extract(&archive)
         .expect("an absolute entry path must not fail the whole input");
 
-    let sanitized = outcome
-        .warnings
-        .iter()
-        .find_map(|warning| match warning {
-            ExtractionWarning::UnsafeEntriesSkipped { sanitized, .. } => Some(sanitized),
-            _ => None,
-        })
-        .expect("the absolute entry path must be reported");
+    let mut payloads = Vec::new();
+    for entry in std::fs::read_dir(&outcome.output).expect("read result") {
+        let entry = entry.expect("result entry");
+        if entry.file_type().expect("file type").is_file() {
+            payloads.push(std::fs::read(entry.path()).expect("read entry"));
+        }
+    }
     assert!(
-        sanitized.iter().any(|name| name.contains("absolute.txt")),
-        "the entry must be named in the report: {sanitized:?}"
-    );
-
-    assert!(outcome.output.is_dir(), "{:?}", outcome.output);
-    assert!(
-        outcome.output.join("absolute.txt").is_file(),
-        "the sanitized entry must be kept"
+        payloads.iter().any(|bytes| bytes == b"/absolute.txt"),
+        "the entry must keep its data, under whatever name 7-Zip chose"
     );
     assert!(outcome.output.join("keep.txt").is_file());
+
+    // 除了归档自己和结果目录，归档所在目录里不得多出别的东西。
+    for entry in std::fs::read_dir(sandbox.path()).expect("read archive directory") {
+        let name = entry
+            .expect("directory entry")
+            .file_name()
+            .to_string_lossy()
+            .into_owned();
+        assert!(
+            name == "absolute" || name == "absolute.zip",
+            "unexpected entry next to the archive: {name}"
+        );
+    }
 }
 
 /// 把最后一个条目的压缩数据末字节改坏（中央目录紧跟在数据之后）。
@@ -1189,7 +1223,7 @@ fn a_corrupted_entry_is_committed_and_reported_while_the_rest_is_kept() {
     );
 }
 
-/// Unicode 与空格文件名：提交名原样保留，冲突时递增序号。
+/// Unicode 与空格文件名：结果目录名与冲突序号由 ezz 决定，条目名原样保留。
 #[test]
 #[ignore = "requires cargo xtask prepare"]
 fn unicode_and_space_names_are_committed_unchanged() {
@@ -1205,46 +1239,17 @@ fn unicode_and_space_names_are_committed_unchanged() {
 
     let workflow = workflow(&seven_zip);
     let first = workflow.extract(&archive).expect("first extraction");
-    assert_eq!(first.output.file_name().unwrap().to_string_lossy(), name);
+    assert_eq!(first.output, sandbox.path().join("unicode"));
     assert_eq!(
-        std::fs::read_to_string(&first.output).expect("read committed file"),
+        std::fs::read_to_string(first.output.join(name)).expect("read committed file"),
         "content"
     );
 
-    // 原归档被 RemoveSource 删除，重建一次以验证冲突命名。
+    // 原归档被回收，重建一次以验证冲突命名。
     create_archive(&seven_zip, &source, &archive, &[name]);
     let second = workflow.extract(&archive).expect("second extraction");
-    assert_eq!(
-        second.output.file_name().unwrap().to_string_lossy(),
-        "报告 汇总 (最终) (1).txt"
-    );
-}
-
-/// 特殊文件（FIFO）必须被丢弃并报告。Windows 上无法构造 FIFO，所以只在 Unix 跑。
-#[cfg(unix)]
-#[test]
-fn special_files_are_discarded_and_reported() {
-    let sandbox = tempfile::tempdir().expect("create test sandbox");
-    let root = sandbox.path().join("extracted");
-    std::fs::create_dir(&root).expect("create root");
-    std::fs::write(root.join("keep.txt"), b"keep").expect("write kept file");
-
-    let fifo = root.join("pipe");
-    let status = std::process::Command::new("mkfifo")
-        .arg(&fifo)
-        .status()
-        .expect("run mkfifo");
-    assert!(status.success(), "mkfifo must create the FIFO");
-
-    let discarded = discard_unsafe_entries(&root).expect("discard unsafe entries");
-
-    assert_eq!(
-        discarded,
-        vec![PathBuf::from("pipe")],
-        "the FIFO must be discarded and named"
-    );
-    assert!(root.join("keep.txt").is_file(), "safe content must be kept");
-    assert!(!fifo.exists(), "the FIFO must be removed");
+    assert_eq!(second.output, sandbox.path().join("unicode (1)"));
+    assert!(second.output.join(name).is_file());
 }
 
 /// 硬链接不可跨越文件系统，归档里的硬链接必须当普通文件处理。
@@ -1274,20 +1279,8 @@ fn hard_links_are_extracted_as_regular_files() {
         .extract(&archive)
         .expect("hard links must not fail the input");
 
-    assert!(
-        !outcome
-            .warnings
-            .iter()
-            .any(|warning| matches!(warning, ExtractionWarning::UnsafeEntriesSkipped { .. })),
-        "hard links must not be reported as unsafe: {:?}",
-        outcome.warnings
-    );
     for name in ["original.txt", "linked.txt"] {
-        let path = if outcome.output.is_dir() {
-            outcome.output.join(name)
-        } else {
-            outcome.output.clone()
-        };
+        let path = outcome.output.join(name);
         assert_eq!(
             std::fs::read_to_string(&path).expect("read extracted file"),
             "shared"
