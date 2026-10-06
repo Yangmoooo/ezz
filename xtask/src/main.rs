@@ -437,7 +437,7 @@ fn update_seven_zip(version: &str) -> Result<(), Box<dyn Error>> {
     let mut text = String::from(
         "# 发布所用的 7-Zip 引擎：唯一来源。\n\
          #\n\
-         # 升级用 `cargo xtask update-7zz <版本>`（或 `just 7zz-update <版本>`）：\n\
+         # 升级用 `cargo xtask update-7zz <版本>`（或 `just update-7zz <版本>`）：\n\
          # 它下载下面两个平台的资产、重新计算 sha256 并回写本文件。\n",
     );
     text.push_str(&format!("\nversion = \"{version}\"\n"));
