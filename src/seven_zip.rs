@@ -183,15 +183,7 @@ impl SevenZip {
                 .arg("x")
                 .arg(output_switch(output_dir))
                 .arg(password_switch(password))
-                .args([
-                    "-y",
-                    "-aoa",
-                    "-spe",
-                    "-bso0",
-                    "-bsp0",
-                    "-sccUTF-8",
-                    "-scsUTF-8",
-                ])
+                .args(["-y", "-aoa", "-bso0", "-bsp0", "-sccUTF-8", "-scsUTF-8"])
                 .arg(input);
         })?;
 

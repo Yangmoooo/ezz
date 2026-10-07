@@ -86,7 +86,7 @@ jobs:
           printf 'packaged artifact check\n' > "$work/in/payload.txt"
           (cd "$work/in" && "$stage/7zz.exe" a "$work/archive.zip" payload.txt)
           "$stage/ezz.exe" "$(cygpath -w "$work/archive.zip")"
-          grep -q "packaged artifact check" "$work/archive/payload.txt"
+          grep -q "packaged artifact check" "$work/payload.txt"
 
       - name: Upload the packaged artifact
         uses: actions/upload-artifact@v6

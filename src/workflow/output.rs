@@ -1,4 +1,4 @@
-//! 结果落点：唯一目录名与平台元数据剔除。
+//! 结果落点：结果目录占名、单一顶层项提升与平台元数据剔除。
 
 use std::ffi::OsStr;
 use std::fs;
@@ -44,42 +44,121 @@ fn unique_destination_candidates<'a>(
     }))
 }
 
-/// 补上 `-spe` 因结果目录改名而失效的那层重复根目录。
-///
-/// `-spe` 只在结果目录名与归档内部根目录名相同时生效；目标名被占用而退让成 `name (1)` 时
-/// 条件不再成立，结果里就多一层。这里只在这种形态上动手：恰好一个子项、它是目录、且名字
-/// 与归档名相同（与 `-spe` 一样忽略大小写）。
-///
-/// 失败只记警告：这是树形补齐，不值得让整次解压失败；搬了一半就停时，还没搬的条目留在原位置。
-pub(super) fn hoist_duplicate_root(output: &Path, archive_stem: &OsStr) {
-    let mut entries = match collect_entries(output) {
+/// 结果里唯一的条目；不是恰好一个时返回 `None`。
+fn only_entry(directory: &Path) -> Option<fs::DirEntry> {
+    let mut entries = match collect_entries(directory) {
         Ok(entries) => entries,
         Err(message) => {
-            warn!("could not inspect the result to hoist a duplicate root: {message}");
-            return;
+            warn!("could not inspect the result to promote a single entry: {message}");
+            return None;
         }
     };
-    if entries.len() != 1 {
-        return;
-    }
-    let inner = entries.pop().expect("one entry");
-    let is_directory = inner.file_type().is_ok_and(|kind| kind.is_dir());
-    if !is_directory || !same_name(&inner.file_name(), archive_stem) {
-        return;
-    }
-    if let Err(message) = hoist_contents(&inner.path(), output) {
-        warn!("could not hoist the duplicate root in the result: {message}");
+    match entries.len() {
+        1 => entries.pop(),
+        _ => None,
     }
 }
 
-/// 把 `inner` 的直接子项搬到 `output` 下，然后删掉空壳。
-fn hoist_contents(inner: &Path, output: &Path) -> Result<(), String> {
-    for entry in collect_entries(inner)? {
-        let target = output.join(entry.file_name());
-        fs::rename(entry.path(), &target)
-            .map_err(|error| format!("could not move {}: {error}", target.display()))?;
+/// 结果里只剩一个条目时，把它提升到归档所在目录（用条目自己的名字），返回提升后的路径。
+///
+/// 引擎原样写出归档的顶层结构，所以“唯一子项”就是归档的单一顶层项；冲突命名与 §5.3 一致
+/// （目录 `name (n)`、文件 `name (n).ext`），绝不覆盖既有条目。
+///
+/// 返回 `None` 时调用方保留 `<归档名>/…` 形态——那仍是一个完整结果，不需要报错。
+pub(super) fn promote_single_entry(output: &Path) -> Option<PathBuf> {
+    let parent = output.parent()?;
+    let entry = only_entry(output)?;
+    let directory = entry.file_type().is_ok_and(|kind| kind.is_dir());
+    let name = entry.file_name();
+
+    let (wrapper, target) = match vacant_name(parent, output, &name, directory) {
+        Ok(chosen) => chosen,
+        Err(message) => {
+            warn!("could not promote the single result entry: {message}");
+            return None;
+        }
+    };
+    // 占名目录可能已经被挪到临时名下，源路径按它现在的位置算。
+    let source = wrapper.join(&name);
+
+    if let Err(error) = fs::rename(&source, &target) {
+        warn!(
+            "could not promote {} to {}: {error}",
+            source.display(),
+            target.display()
+        );
+        // 让位用的临时名要还原，别把结果留在临时名下。
+        if wrapper != output {
+            let _ = fs::rename(&wrapper, output);
+        }
+        return None;
     }
-    fs::remove_dir(inner).map_err(|error| format!("could not remove {}: {error}", inner.display()))
+
+    // 已经空了的占名目录不该留在结果旁边。
+    if let Err(error) = fs::remove_dir(&wrapper) {
+        warn!("could not remove {}: {error}", wrapper.display());
+    }
+    Some(target)
+}
+
+/// 取一个空闲的目标名，返回（占名目录现在的位置、目标路径）。
+///
+/// 这个名字正被占名目录自己占着时（`bundle.zip` 内含单一目录 `bundle/`，或本次撞名退让成
+/// `bundle (1)`），先把占名目录挪成临时名让位——它就在目标名的位置上。
+fn vacant_name(
+    parent: &Path,
+    output: &Path,
+    name: &OsStr,
+    directory: bool,
+) -> Result<(PathBuf, PathBuf), String> {
+    for candidate in promoted_candidates(parent, name, directory) {
+        if !candidate.exists() {
+            return Ok((output.to_path_buf(), candidate));
+        }
+        if !same_name(
+            candidate.file_name().unwrap_or_default(),
+            output.file_name().unwrap_or_default(),
+        ) {
+            continue;
+        }
+        let scratch =
+            vacant_scratch_path(parent).ok_or_else(|| "no free temporary name".to_owned())?;
+        fs::rename(output, &scratch)
+            .map_err(|error| format!("could not move {} aside: {error}", output.display()))?;
+        return Ok((scratch, candidate));
+    }
+    Err("no free result name".to_owned())
+}
+
+/// 目标名候选：目录是 `name`, `name (1)`, …；文件是 `name.ext`, `name (1).ext`, …。
+fn promoted_candidates<'a>(
+    parent: &'a Path,
+    name: &'a OsStr,
+    directory: bool,
+) -> impl Iterator<Item = PathBuf> + 'a {
+    let path = Path::new(name);
+    let (stem, extension) = match (directory, path.file_stem(), path.extension()) {
+        (false, Some(stem), Some(extension)) => {
+            (stem.to_os_string(), Some(extension.to_os_string()))
+        }
+        _ => (name.to_os_string(), None),
+    };
+    std::iter::once(parent.join(name)).chain((1_u64..).map(move |sequence| {
+        let mut candidate = stem.clone();
+        candidate.push(format!(" ({sequence})"));
+        if let Some(extension) = &extension {
+            candidate.push(".");
+            candidate.push(extension);
+        }
+        parent.join(candidate)
+    }))
+}
+
+/// 让位用的临时名：只活几毫秒，递增后缀就够（用户恰好占着同名就换下一个）。
+fn vacant_scratch_path(parent: &Path) -> Option<PathBuf> {
+    (0..100)
+        .map(|sequence| parent.join(format!(".ezz-move-{sequence}")))
+        .find(|candidate| !candidate.exists())
 }
 
 /// 先把条目读完再动手：一边遍历目录一边把条目搬出去会漏掉后面的条目。
@@ -90,7 +169,7 @@ fn collect_entries(directory: &Path) -> Result<Vec<fs::DirEntry>, String> {
         .map_err(|error| format!("{}: {error}", directory.display()))
 }
 
-/// 名字比较：与 `-spe` 在 Windows 上的口径一致，忽略大小写。
+/// 名字比较：Windows 文件系统不区分大小写，`BUNDLE` 与 `bundle` 是同一个位置。
 fn same_name(left: &OsStr, right: &OsStr) -> bool {
     left.to_string_lossy().to_lowercase() == right.to_string_lossy().to_lowercase()
 }
@@ -200,58 +279,90 @@ mod tests {
     }
 
     #[test]
-    fn a_single_same_named_directory_is_hoisted() {
+    fn a_single_entry_becomes_the_result() {
         let sandbox = tempfile::tempdir().expect("create test sandbox");
         let output = sandbox.path().join("bundle");
-        let nested = output.join("bundle/nested");
-        std::fs::create_dir_all(&nested).expect("create nested directory");
-        std::fs::write(nested.join("payload.txt"), b"payload").expect("write payload");
+        std::fs::create_dir_all(output.join("inner")).expect("create inner directory");
+        std::fs::write(output.join("inner/payload.txt"), b"payload").expect("write payload");
 
-        hoist_duplicate_root(&output, OsStr::new("bundle"));
+        let promoted = promote_single_entry(&output).expect("promote the single entry");
 
-        assert!(output.join("nested/payload.txt").is_file());
-        assert!(!output.join("bundle").exists());
+        assert_eq!(promoted, sandbox.path().join("inner"));
+        assert!(promoted.join("payload.txt").is_file());
+        assert!(!output.exists());
     }
 
-    /// 只有“恰好一个子项 + 目录 + 同名”三者齐备才动手；大小写不同算同名。
+    /// `bundle.zip` 内含单一目录 `bundle/`：目标名正被占名目录自己占着，要让位。
     #[test]
-    fn hoisting_only_touches_a_same_named_single_directory() {
-        let build = |entries: &[(&str, bool)]| {
-            let sandbox = tempfile::tempdir().expect("create test sandbox");
-            let output = sandbox.path().join("bundle");
-            std::fs::create_dir(&output).expect("create result directory");
-            for (name, directory) in entries {
-                let path = output.join(name);
-                if *directory {
-                    std::fs::create_dir_all(&path).expect("create directory");
-                } else {
-                    if let Some(parent) = path.parent() {
-                        std::fs::create_dir_all(parent).expect("create parent directory");
-                    }
-                    std::fs::write(&path, b"x").expect("write file");
-                }
-            }
-            sandbox
-        };
+    fn a_single_entry_wins_over_the_claimed_directory_name() {
+        let sandbox = tempfile::tempdir().expect("create test sandbox");
+        let output = sandbox.path().join("bundle");
+        std::fs::create_dir_all(output.join("bundle/nested")).expect("create nested directory");
+        std::fs::write(output.join("bundle/nested/payload.txt"), b"payload")
+            .expect("write payload");
 
-        // 不止一个子项。
-        let two = build(&[("bundle", true), ("other", false)]);
-        hoist_duplicate_root(&two.path().join("bundle"), OsStr::new("bundle"));
-        assert!(two.path().join("bundle/bundle").is_dir());
+        let promoted = promote_single_entry(&output).expect("promote the single entry");
 
-        // 单个同名文件。
-        let file = build(&[("bundle", false)]);
-        hoist_duplicate_root(&file.path().join("bundle"), OsStr::new("bundle"));
-        assert!(file.path().join("bundle/bundle").is_file());
+        assert_eq!(promoted, sandbox.path().join("bundle"));
+        assert!(promoted.join("nested/payload.txt").is_file());
+    }
 
-        // 名字不同。
-        let different = build(&[("inner", true)]);
-        hoist_duplicate_root(&different.path().join("bundle"), OsStr::new("bundle"));
-        assert!(different.path().join("bundle/inner").is_dir());
+    #[test]
+    fn a_single_file_becomes_the_result_without_losing_its_extension() {
+        let sandbox = tempfile::tempdir().expect("create test sandbox");
+        let output = sandbox.path().join("bundle");
+        std::fs::create_dir(&output).expect("create result directory");
+        std::fs::write(output.join("payload.txt"), b"payload").expect("write payload");
 
-        // 只有大小写不同。
-        let case = build(&[("BUNDLE/payload.txt", false)]);
-        hoist_duplicate_root(&case.path().join("bundle"), OsStr::new("bundle"));
-        assert!(case.path().join("bundle/payload.txt").is_file());
+        let promoted = promote_single_entry(&output).expect("promote the single entry");
+
+        assert_eq!(promoted, sandbox.path().join("payload.txt"));
+        assert!(promoted.is_file());
+    }
+
+    #[test]
+    fn existing_names_push_the_result_to_the_next_candidate() {
+        let sandbox = tempfile::tempdir().expect("create test sandbox");
+        std::fs::create_dir(sandbox.path().join("inner")).expect("create existing directory");
+        let output = sandbox.path().join("bundle");
+        std::fs::create_dir_all(output.join("inner")).expect("create inner directory");
+
+        assert_eq!(
+            promote_single_entry(&output),
+            Some(sandbox.path().join("inner (1)"))
+        );
+
+        let file = tempfile::tempdir().expect("create test sandbox");
+        std::fs::write(file.path().join("payload.txt"), b"existing").expect("write existing");
+        let output = file.path().join("bundle");
+        std::fs::create_dir(&output).expect("create result directory");
+        std::fs::write(output.join("payload.txt"), b"payload").expect("write payload");
+
+        assert_eq!(
+            promote_single_entry(&output),
+            Some(file.path().join("payload (1).txt"))
+        );
+        assert_eq!(
+            std::fs::read_to_string(file.path().join("payload.txt")).expect("read existing"),
+            "existing"
+        );
+    }
+
+    #[test]
+    fn nothing_is_promoted_without_exactly_one_entry() {
+        let sandbox = tempfile::tempdir().expect("create test sandbox");
+
+        let empty = sandbox.path().join("empty");
+        std::fs::create_dir(&empty).expect("create empty result");
+        assert_eq!(promote_single_entry(&empty), None);
+        assert!(empty.is_dir());
+
+        let two = sandbox.path().join("two");
+        std::fs::create_dir(&two).expect("create result with two entries");
+        std::fs::write(two.join("first.txt"), b"1").expect("write first");
+        std::fs::write(two.join("second.txt"), b"2").expect("write second");
+        assert_eq!(promote_single_entry(&two), None);
+        assert!(two.join("first.txt").is_file());
+        assert!(two.join("second.txt").is_file());
     }
 }

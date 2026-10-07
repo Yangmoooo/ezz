@@ -100,7 +100,7 @@ fn workflow_with_store(
 
 #[test]
 #[ignore = "requires cargo xtask prepare"]
-fn real_archive_extracts_into_a_directory_named_after_the_archive() {
+fn a_single_file_archive_lands_beside_the_archive() {
     let seven_zip = prepared_seven_zip();
 
     let sandbox = tempfile::tempdir().expect("create test sandbox");
@@ -115,7 +115,8 @@ fn real_archive_extracts_into_a_directory_named_after_the_archive() {
         .extract(&archive)
         .expect("extract archive");
 
-    let output = sandbox.path().join("archive");
+    // 单顶层项的归档：结果就是那个条目本身，不再包一层以归档命名的目录。
+    let output = sandbox.path().join("payload.txt");
     assert_eq!(
         outcome,
         ExtractionOutcome {
@@ -125,7 +126,7 @@ fn real_archive_extracts_into_a_directory_named_after_the_archive() {
         }
     );
     assert_eq!(
-        std::fs::read(output.join("payload.txt")).expect("read extracted payload"),
+        std::fs::read(&output).expect("read extracted payload"),
         b"ezz v3 payload"
     );
     assert!(
@@ -158,7 +159,7 @@ fn cleanup_failure_is_reported_as_a_success_warning() {
         }]
     );
     assert!(
-        sandbox.path().join("archive/payload.txt").is_file(),
+        sandbox.path().join("payload.txt").is_file(),
         "extracted output must stay committed"
     );
     assert!(archive.is_file(), "failed cleanup must preserve the source");
@@ -247,11 +248,13 @@ fn an_existing_file_named_like_the_archive_forces_a_sequence_suffix() {
     let seven_zip = prepared_seven_zip();
 
     let sandbox = tempfile::tempdir().expect("create test sandbox");
-    let payload = sandbox.path().join("payload.txt");
+    // 归档里只有一个名字为 `archive` 的文件，而归档旁边已经有同名的文件。
+    let source = sandbox.path().join("source");
     let archive = sandbox.path().join("archive.7z");
-    std::fs::write(&payload, b"new content").expect("create payload");
-    create_archive(&seven_zip, sandbox.path(), &archive, &["payload.txt"]);
-    std::fs::remove_file(&payload).expect("remove source payload");
+    std::fs::create_dir_all(&source).expect("create source directory");
+    std::fs::write(source.join("archive"), b"new content").expect("create payload");
+    create_archive(&seven_zip, &source, &archive, &["archive"]);
+    std::fs::remove_dir_all(&source).expect("remove source tree");
     std::fs::write(sandbox.path().join("archive"), b"existing content")
         .expect("create existing file");
 
@@ -261,17 +264,15 @@ fn an_existing_file_named_like_the_archive_forces_a_sequence_suffix() {
 
     let sequenced = sandbox.path().join("archive (1)");
     assert_eq!(outcome.output, sequenced);
+    assert!(sequenced.is_file());
     assert_eq!(
         std::fs::read(sandbox.path().join("archive")).unwrap(),
         b"existing content"
     );
-    assert_eq!(
-        std::fs::read(sequenced.join("payload.txt")).unwrap(),
-        b"new content"
-    );
+    assert_eq!(std::fs::read(&sequenced).unwrap(), b"new content");
 }
 
-/// 目标名被占用时，与归档同名的重复根目录层由 ezz 补掉（`-spe` 此时不生效）。
+/// 单顶层目录直接作为结果；目标名被占用时用递增序号。
 #[test]
 #[ignore = "requires cargo xtask prepare"]
 fn a_duplicate_root_is_hoisted_when_the_result_name_is_taken() {
@@ -295,12 +296,12 @@ fn a_duplicate_root_is_hoisted_when_the_result_name_is_taken() {
 
     let workflow = workflow(&seven_zip);
 
-    // 没冲突：引擎的 `-spe` 自己剥掉重复层。
+    // 第一次：唯一的顶层目录 `bundle/` 成为结果本身。
     let first = workflow.extract(&archive).expect("first extraction");
     assert_eq!(first.output, sandbox.path().join("bundle"));
     assert!(first.output.join("payload.txt").is_file());
 
-    // 第二次：目标名被占用，结果退让成 `bundle (1)`，重复层由 ezz 补掉。
+    // 第二次：同名结果已存在，结果退让成 `bundle (1)`。
     build();
     let second = workflow.extract(&archive).expect("second extraction");
     assert_eq!(second.output, sandbox.path().join("bundle (1)"));
@@ -312,10 +313,10 @@ fn a_duplicate_root_is_hoisted_when_the_result_name_is_taken() {
     );
 }
 
-/// 单一根目录名与归档名不同时不得动它：规则只管“与归档同名的重复层”。
+/// 单一根目录名与归档名不同时，结果用根目录自己的名字。
 #[test]
 #[ignore = "requires cargo xtask prepare"]
-fn a_single_root_with_a_different_name_is_not_hoisted() {
+fn a_single_root_with_a_different_name_becomes_the_result() {
     let seven_zip = prepared_seven_zip();
 
     let sandbox = tempfile::tempdir().expect("create test sandbox");
@@ -336,9 +337,11 @@ fn a_single_root_with_a_different_name_is_not_hoisted() {
         .extract(&archive)
         .expect("extract archive");
 
-    let output = sandbox.path().join("bundle (1)");
+    let output = sandbox.path().join("inner");
     assert_eq!(outcome.output, output);
-    assert!(output.join("inner/payload.txt").is_file());
+    assert!(output.join("payload.txt").is_file());
+    // 归档旁边原有的同名目录不受影响。
+    assert!(sandbox.path().join("bundle").is_dir());
 }
 
 #[test]
@@ -412,11 +415,25 @@ fn platform_metadata_is_removed_from_the_whole_result() {
         .extract(&archive)
         .expect("extract archive");
 
-    let output = sandbox.path().join("archive");
+    // 三个顶层条目里有两个是平台元数据：清理后只剩一个，于是它成为结果本身。
+    let output = sandbox.path().join("payload.txt");
     assert_eq!(outcome.output, output);
-    assert!(output.join("payload.txt").is_file());
-    assert!(!output.join(".DS_Store").exists());
-    assert!(!output.join("__MACOSX").exists());
+    assert_eq!(std::fs::read(&output).unwrap(), b"payload");
+    let remaining: Vec<String> = std::fs::read_dir(sandbox.path())
+        .expect("read archive directory")
+        .map(|entry| {
+            entry
+                .expect("directory entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    assert!(
+        !remaining
+            .iter()
+            .any(|name| name == ".DS_Store" || name == "__MACOSX")
+    );
     // 清理只写日志，不进通知。
     assert!(outcome.warnings.is_empty(), "{:?}", outcome.warnings);
 }
@@ -470,7 +487,7 @@ fn an_escaping_link_is_left_to_the_engine_and_reported_as_a_warning() {
 
 #[test]
 #[ignore = "requires cargo xtask prepare"]
-fn a_parent_directory_entry_lands_next_to_the_result() {
+fn a_parent_directory_entry_is_rewritten_into_the_result() {
     let seven_zip = prepared_seven_zip();
 
     let sandbox = tempfile::tempdir().expect("create test sandbox");
@@ -486,24 +503,26 @@ fn a_parent_directory_entry_lands_next_to_the_result() {
         .extract(&archive)
         .expect("a rewritten entry must not fail the whole input");
 
+    // 唯一条目就是被重写后的那个：它自己成为结果。
+    assert_eq!(outcome.output, sandbox.path().join(&escaped_name));
     assert_eq!(
-        std::fs::read_to_string(outcome.output.join(&escaped_name)).expect("read rewritten entry"),
+        std::fs::read_to_string(&outcome.output).expect("read rewritten entry"),
         "must not escape"
     );
-    let mut next_to_result = Vec::new();
+    let mut unexpected = Vec::new();
     for entry in std::fs::read_dir(sandbox.path()).expect("read archive directory") {
         let name = entry
             .expect("directory entry")
             .file_name()
             .to_string_lossy()
             .into_owned();
-        if name != "unsafe" && name != "unsafe.zip" {
-            next_to_result.push(name);
+        if name != escaped_name && name != "unsafe.zip" {
+            unexpected.push(name);
         }
     }
     assert!(
-        next_to_result.is_empty(),
-        "nothing may land next to the result: {next_to_result:?}"
+        unexpected.is_empty(),
+        "nothing unexpected may land next to the archive: {unexpected:?}"
     );
 }
 
@@ -534,10 +553,8 @@ fn encrypted_archive_uses_prompted_password_and_honors_keep_source() {
         .extract(&archive)
         .expect("extract encrypted archive");
 
-    assert_eq!(
-        std::fs::read(outcome.output.join("secret.txt")).unwrap(),
-        b"classified"
-    );
+    assert_eq!(outcome.output, sandbox.path().join("secret.txt"));
+    assert_eq!(std::fs::read(&outcome.output).unwrap(), b"classified");
     assert!(archive.is_file(), "keep source must preserve the archive");
     assert!(outcome.warnings.is_empty(), "cleaner must not be called");
 }
@@ -569,9 +586,9 @@ fn content_encrypted_archive_uses_the_prompted_password() {
         .extract(&archive)
         .expect("extract content-encrypted archive");
 
-    assert_eq!(outcome.output, sandbox.path().join("content-encrypted"));
+    assert_eq!(outcome.output, sandbox.path().join("visible-name.txt"));
     assert_eq!(
-        std::fs::read(outcome.output.join("visible-name.txt")).unwrap(),
+        std::fs::read(&outcome.output).unwrap(),
         b"encrypted content"
     );
     assert!(
@@ -614,10 +631,8 @@ fn password_prompt_can_retry_after_an_incorrect_password() {
         .extract(&archive)
         .expect("retry with the correct password");
 
-    assert_eq!(
-        std::fs::read(outcome.output.join("secret.txt")).unwrap(),
-        b"classified"
-    );
+    assert_eq!(outcome.output, sandbox.path().join("secret.txt"));
+    assert_eq!(std::fs::read(&outcome.output).unwrap(), b"classified");
     assert!(!archive.exists(), "successful retry must clean the source");
 }
 
@@ -704,11 +719,19 @@ fn remembered_password_is_used_for_the_next_archive() {
             .expect("reuse remembered password without a prompt");
 
     assert_eq!(
-        std::fs::read(first_outcome.output.join("first-secret.txt")).unwrap(),
+        first_outcome.output,
+        sandbox.path().join("first-secret.txt")
+    );
+    assert_eq!(
+        std::fs::read(&first_outcome.output).unwrap(),
         b"first secret"
     );
     assert_eq!(
-        std::fs::read(second_outcome.output.join("second-secret.txt")).unwrap(),
+        second_outcome.output,
+        sandbox.path().join("second-secret.txt")
+    );
+    assert_eq!(
+        std::fs::read(&second_outcome.output).unwrap(),
         b"second secret"
     );
     assert!(
@@ -738,9 +761,9 @@ fn numeric_volume_input_finds_the_first_volume_and_cleans_the_complete_set() {
         .extract(&second_volume)
         .expect("extract from a non-first numeric volume");
 
-    assert_eq!(outcome.output, sandbox.path().join("bundle"));
+    assert_eq!(outcome.output, sandbox.path().join("payload.bin"));
     assert_eq!(
-        std::fs::read(outcome.output.join("payload.bin")).unwrap(),
+        std::fs::read(&outcome.output).unwrap(),
         vec![0x5a; 8 * 1024]
     );
     assert!(
@@ -813,11 +836,8 @@ fn steganographier_mp4_extracts_its_embedded_zip() {
         .extract(&video)
         .expect("extract Steganographier MP4");
 
-    assert_eq!(outcome.output, sandbox.path().join("carrier"));
-    assert_eq!(
-        std::fs::read(outcome.output.join("hidden.txt")).unwrap(),
-        b"hidden payload"
-    );
+    assert_eq!(outcome.output, sandbox.path().join("hidden.txt"));
+    assert_eq!(std::fs::read(&outcome.output).unwrap(), b"hidden payload");
     assert!(
         !video.exists(),
         "successful extraction must clean the video"
@@ -863,11 +883,8 @@ fn archive_with_an_mp4_extension_is_detected_by_content() {
         .extract(&archive)
         .expect("extract renamed ZIP");
 
-    assert_eq!(outcome.output, sandbox.path().join("renamed"));
-    assert_eq!(
-        std::fs::read(outcome.output.join("renamed.txt")).unwrap(),
-        b"renamed archive"
-    );
+    assert_eq!(outcome.output, sandbox.path().join("renamed.txt"));
+    assert_eq!(std::fs::read(&outcome.output).unwrap(), b"renamed archive");
     assert!(
         !archive.exists(),
         "successful extraction must clean the source"
@@ -898,18 +915,16 @@ fn tar_gzip_and_xz_archives_extract_through_the_shared_workflow() {
             .extract(&archive)
             .expect("extract archive format");
 
-        let output = sandbox.path().join("archive");
-        assert_eq!(outcome.output, output);
         // 单文件流没有条目名，7-Zip 用归档名当文件名。
         let entry = if archive_type == "xz" {
             "archive".to_owned()
         } else {
             format!("payload-{archive_type}.txt")
         };
-        assert_eq!(
-            std::fs::read_to_string(output.join(entry)).unwrap(),
-            content
-        );
+        // 唯一条目成为结果本身。
+        let output = sandbox.path().join(&entry);
+        assert_eq!(outcome.output, output);
+        assert_eq!(std::fs::read_to_string(&output).unwrap(), content);
         assert!(
             !archive.exists(),
             "successful extraction must clean the source"
@@ -939,9 +954,9 @@ fn steganographier_mkv_extracts_its_embedded_zip() {
         .extract(&video)
         .expect("extract Steganographier MKV");
 
-    assert_eq!(outcome.output, sandbox.path().join("carrier"));
+    assert_eq!(outcome.output, sandbox.path().join("mkv-hidden.txt"));
     assert_eq!(
-        std::fs::read(outcome.output.join("mkv-hidden.txt")).unwrap(),
+        std::fs::read(&outcome.output).unwrap(),
         b"MKV hidden payload"
     );
     assert!(
@@ -969,10 +984,9 @@ fn rar_non_first_volume_extracts_and_cleans_the_complete_set() {
         .extract(&volumes[1])
         .expect("extract from second RAR volume");
 
-    let output = sandbox.path().join("rar-multivolume");
+    let output = sandbox.path().join("LibarchiveAddingTest.html");
     assert_eq!(outcome.output, output);
-    let content = std::fs::read(output.join("LibarchiveAddingTest.html"))
-        .expect("read extracted RAR content");
+    let content = std::fs::read(&output).expect("read extracted RAR content");
     assert_eq!(content.len(), 20_111);
     assert!(content.ends_with(b"</BODY>\n</HTML>"));
     assert!(
@@ -997,10 +1011,9 @@ fn zip_non_first_volume_extracts_and_cleans_the_complete_set() {
         .extract(&first)
         .expect("extract from first ZIP split volume");
 
-    let output = sandbox.path().join("zip-multivolume");
+    let output = sandbox.path().join("zip-volume-payload.txt");
     assert_eq!(outcome.output, output);
-    let content =
-        std::fs::read(output.join("zip-volume-payload.txt")).expect("read extracted ZIP content");
+    let content = std::fs::read(&output).expect("read extracted ZIP content");
     assert_eq!(content.len(), 70_000);
     assert!(content.starts_with(b"ezz zip volume payload\n"));
     assert!(!first.exists(), "first ZIP volume must be cleaned");
@@ -1295,17 +1308,18 @@ fn unicode_and_space_names_are_committed_unchanged() {
 
     let workflow = workflow(&seven_zip);
     let first = workflow.extract(&archive).expect("first extraction");
-    assert_eq!(first.output, sandbox.path().join("unicode"));
+    assert_eq!(first.output, sandbox.path().join(name));
     assert_eq!(
-        std::fs::read_to_string(first.output.join(name)).expect("read committed file"),
+        std::fs::read_to_string(&first.output).expect("read committed file"),
         "content"
     );
 
     // 原归档被回收，重建一次以验证冲突命名。
     create_archive(&seven_zip, &source, &archive, &[name]);
     let second = workflow.extract(&archive).expect("second extraction");
-    assert_eq!(second.output, sandbox.path().join("unicode (1)"));
-    assert!(second.output.join(name).is_file());
+    let sequenced = sandbox.path().join("报告 汇总 (最终) (1).txt");
+    assert_eq!(second.output, sequenced);
+    assert_eq!(std::fs::read_to_string(&sequenced).unwrap(), "content");
 }
 
 /// 硬链接不可跨越文件系统，归档里的硬链接必须当普通文件处理。

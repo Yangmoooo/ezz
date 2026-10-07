@@ -24,7 +24,7 @@ mod tests;
 
 use archive_set::resolve_archive_set;
 use input_format::detect_input_format;
-use output::{claim_output_directory, hoist_duplicate_root, is_empty, remove_platform_metadata};
+use output::{claim_output_directory, is_empty, promote_single_entry, remove_platform_metadata};
 
 /// 提取阶段连续报密码错的重试上限：没有上限时，没有任何密码能解开的包会让弹窗无限重现。
 const MAX_PASSWORD_RETRIES: u32 = 3;
@@ -258,9 +258,6 @@ impl ExtractionWorkflow {
             }
         };
 
-        // `-spe` 只在结果目录名与内部根目录名相同时生效；名字被占用退让成 `(1)` 时补一层。
-        hoist_duplicate_root(&output, &archive_set.output_stem);
-
         let mut warnings = Vec::new();
         // 平台元数据清理只记日志：它不影响结果的有效性，不值得进通知。
         let removed_metadata = match remove_platform_metadata(&output) {
@@ -277,6 +274,8 @@ impl ExtractionWorkflow {
         if removed_metadata && is_empty(&output)? {
             warnings.push(ExtractionWarning::EmptyAfterMetadataRemoval);
         }
+        // 单一顶层项直接作为结果（§5.2）。提升失败时保留 `<归档名>/…`，形态退一步但不丢结果。
+        let output = promote_single_entry(&output).unwrap_or(output);
         if let Some(message) = verdict.engine_warning {
             warnings.push(ExtractionWarning::EngineWarnings { message });
         }
