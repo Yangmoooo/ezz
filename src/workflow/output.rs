@@ -154,11 +154,19 @@ fn promoted_candidates<'a>(
     }))
 }
 
-/// 让位用的临时名：只活几毫秒，递增后缀就够（用户恰好占着同名就换下一个）。
+/// 让位用的临时名，与 Steganographier 的 scratch 同一命名族：`.ezz-` + 4 位随机。
+///
+/// 名字只活两次 rename 之间：先用它把占名目录挪开，提升完立刻删掉。为了不自己带着一个
+/// 随机源，先让 `tempfile` 建一个带随机名的目录，再把它删掉、把名字拿来用。
 fn vacant_scratch_path(parent: &Path) -> Option<PathBuf> {
-    (0..100)
-        .map(|sequence| parent.join(format!(".ezz-move-{sequence}")))
-        .find(|candidate| !candidate.exists())
+    let scratch = tempfile::Builder::new()
+        .prefix(".ezz-")
+        .rand_bytes(4)
+        .tempdir_in(parent)
+        .ok()?;
+    let path = scratch.path().to_path_buf();
+    scratch.close().ok()?;
+    Some(path)
 }
 
 /// 先把条目读完再动手：一边遍历目录一边把条目搬出去会漏掉后面的条目。
@@ -305,6 +313,22 @@ mod tests {
 
         assert_eq!(promoted, sandbox.path().join("bundle"));
         assert!(promoted.join("nested/payload.txt").is_file());
+        // 让位用的临时名不得留下任何痕迹。
+        let leftovers: Vec<String> = std::fs::read_dir(sandbox.path())
+            .expect("read archive directory")
+            .map(|entry| {
+                entry
+                    .expect("entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .filter(|name| name.starts_with(".ezz-"))
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "no temp name may survive: {leftovers:?}"
+        );
     }
 
     #[test]
