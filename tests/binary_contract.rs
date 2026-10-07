@@ -2,8 +2,6 @@
 //!
 //! 注意：真实二进制会把原归档送进回收站。
 
-#![cfg(windows)]
-
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
 use std::sync::{Mutex, MutexGuard};

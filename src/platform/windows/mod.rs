@@ -13,9 +13,6 @@ use windows::Win32::Foundation::HINSTANCE;
 use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::WinRT::{RO_INIT_SINGLETHREADED, RoInitialize};
-use windows::Win32::UI::Controls::{
-    ICC_STANDARD_CLASSES, ICC_WIN95_CLASSES, INITCOMMONCONTROLSEX, InitCommonControlsEx,
-};
 use windows::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW};
 use windows::core::PCWSTR;
 
@@ -100,15 +97,8 @@ fn initialize_process() -> Result<(), Box<dyn Error>> {
     // SAFETY: 在主线程上调用；`None` 表示不载入类型库，使用默认安全属性。
     unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }.ok()?;
 
-    // 视觉样式来自清单里的 Common-Controls 6.0 依赖；这里只注册控件类。
-    let common_controls = INITCOMMONCONTROLSEX {
-        dwSize: size_of::<INITCOMMONCONTROLSEX>() as u32,
-        dwICC: ICC_STANDARD_CLASSES | ICC_WIN95_CLASSES,
-    };
-    // SAFETY: `dwSize` 已按 API 要求填写为结构体大小。
-    if !unsafe { InitCommonControlsEx(&common_controls) }.as_bool() {
-        warn!("could not register common controls");
-    }
+    // 对话框只用 USER32 自带的类（Button/Edit/Static），视觉样式来自清单里的
+    // Common-Controls 6.0 依赖，所以不需要 `InitCommonControlsEx`。
 
     // WinRT 的 apartment 必须与 COM 一致（都是 STA）。失败只影响通知，所以只记录。
     // SAFETY: 与上面的 COM 初始化同为单线程 apartment。

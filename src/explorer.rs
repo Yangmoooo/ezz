@@ -19,7 +19,6 @@ pub(crate) fn refresh_parents(paths: &[PathBuf]) {
     refresh_directories(&directories);
 }
 
-#[cfg(windows)]
 fn refresh_directories(directories: &[PathBuf]) {
     use std::os::windows::ffi::OsStrExt;
 
@@ -42,6 +41,3 @@ fn refresh_directories(directories: &[PathBuf]) {
         }
     }
 }
-
-#[cfg(not(windows))]
-fn refresh_directories(_directories: &[PathBuf]) {}

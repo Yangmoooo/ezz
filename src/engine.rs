@@ -6,10 +6,7 @@ use std::path::PathBuf;
 pub const OVERRIDE_VARIABLE: &str = "EZZ_7ZZ";
 
 /// 发布物里与主程序并列的引擎文件名。
-#[cfg(windows)]
 pub const ENGINE_FILE_NAME: &str = "7zz.exe";
-#[cfg(not(windows))]
-pub const ENGINE_FILE_NAME: &str = "7zz";
 
 #[derive(Debug, thiserror::Error)]
 pub enum EngineError {

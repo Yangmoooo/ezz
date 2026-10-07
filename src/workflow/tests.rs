@@ -438,53 +438,6 @@ fn platform_metadata_is_removed_from_the_whole_result() {
     assert!(outcome.warnings.is_empty(), "{:?}", outcome.warnings);
 }
 
-#[cfg(unix)]
-#[test]
-#[ignore = "requires cargo xtask prepare"]
-fn an_escaping_link_is_left_to_the_engine_and_reported_as_a_warning() {
-    use std::os::unix::fs::symlink;
-
-    let seven_zip = prepared_seven_zip();
-
-    let sandbox = tempfile::tempdir().expect("create test sandbox");
-    let link = sandbox.path().join("escape");
-    let archive = sandbox.path().join("archive.7z");
-    let outside_name = format!("ezz-escape-outside-{}", std::process::id());
-    let outside = sandbox
-        .path()
-        .parent()
-        .expect("sandbox parent")
-        .join(&outside_name);
-    symlink(format!("../{outside_name}"), &link).expect("create escaping symlink");
-    create_archive(&seven_zip, sandbox.path(), &archive, &["escape"]);
-    std::fs::remove_file(&link).expect("remove source symlink");
-
-    let outcome = workflow(&seven_zip)
-        .extract(&archive)
-        .expect("an escaping link must not fail the whole input");
-
-    // 7-Zip 自己拒绝危险链接（降级成普通文件并结束于退出码 2），ezz 只把它的消息登记下来。
-    let reported = outcome
-        .warnings
-        .iter()
-        .find_map(|warning| match warning {
-            ExtractionWarning::EngineWarnings { message } => Some(message),
-            _ => None,
-        })
-        .expect("the engine message must be reported");
-    assert!(reported.contains("escape"), "{reported}");
-    let committed = std::fs::symlink_metadata(outcome.output.join("escape"))
-        .expect("the degraded entry must be committed");
-    assert!(
-        committed.file_type().is_file(),
-        "the committed entry must be a regular file, not a link"
-    );
-    assert!(
-        std::fs::symlink_metadata(&outside).is_err(),
-        "the escaping link must not create anything outside the result"
-    );
-}
-
 #[test]
 #[ignore = "requires cargo xtask prepare"]
 fn a_parent_directory_entry_is_rewritten_into_the_result() {

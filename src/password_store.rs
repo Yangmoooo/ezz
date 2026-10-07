@@ -239,16 +239,6 @@ impl From<PasswordDatabaseFile> for PasswordDatabase {
     }
 }
 
-#[cfg(unix)]
-fn set_private_permissions(path: &Path) -> std::io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-
-    let mut permissions = fs::metadata(path)?.permissions();
-    permissions.set_mode(0o600);
-    fs::set_permissions(path, permissions)
-}
-
-#[cfg(windows)]
 fn set_private_permissions(path: &Path) -> std::io::Result<()> {
     use std::ffi::OsString;
 
