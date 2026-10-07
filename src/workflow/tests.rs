@@ -1473,15 +1473,10 @@ fn write_zip(archive: &Path, entries: &[(&str, &[u8])]) {
 }
 
 fn prepared_seven_zip() -> PathBuf {
-    let binary_name = if cfg!(target_os = "windows") {
-        "7zz.exe"
-    } else {
-        "7zz"
-    };
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("target")
         .join("ezz-tools")
-        .join(binary_name);
+        .join("7zz.exe");
     assert!(path.is_file(), "run `cargo xtask prepare` before this test");
     path
 }
