@@ -7,7 +7,6 @@ use log::{error, info, warn};
 use simplelog::{Config, ConfigBuilder, LevelFilter, WriteLogger, format_description};
 
 /// 拒绝报告里最多列出的输入路径条数；完整清单始终进日志。
-#[cfg(target_os = "windows")]
 const MAX_REPORTED_INPUTS: usize = 4;
 
 pub struct PlatformPaths {
@@ -17,13 +16,6 @@ pub struct PlatformPaths {
 
 impl PlatformPaths {
     pub fn discover() -> Result<Self, Box<dyn Error>> {
-        #[cfg(target_os = "macos")]
-        let directory = PathBuf::from(std::env::var_os("HOME").ok_or("HOME is not set")?)
-            .join("Library")
-            .join("Application Support")
-            .join("ezz");
-
-        #[cfg(target_os = "windows")]
         let directory =
             PathBuf::from(std::env::var_os("LOCALAPPDATA").ok_or("LOCALAPPDATA is not set")?)
                 .join("ezz");
@@ -96,7 +88,6 @@ fn failure_body(name: &str, error: &ExtractionError) -> String {
 }
 
 /// 报告"本次调用被跳过"：措辞必须是"已跳过"而不是"失败"，而且走通知而不是模态弹窗。
-#[cfg(target_os = "windows")]
 pub fn report_skipped(inputs: &[PathBuf]) {
     // 无参数启动时没有可点名的输入：只说"已经在运行"。
     if inputs.is_empty() {
@@ -181,7 +172,7 @@ fn log_warning(warning: &ExtractionWarning) {
     }
 }
 
-// 通知通道由平台模块提供：Windows 是 WinRT toast，macOS 是 UNUserNotificationCenter。
+// 通知通道由平台模块提供：Windows 上是 WinRT toast。
 
 #[cfg(test)]
 mod tests {

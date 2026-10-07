@@ -205,7 +205,7 @@ unsafe fn initialize_controls(window: HWND, context: &DialogContext) {
                 LPARAM(0),
             );
         }
-        // 无主窗口的应用刚被调用起来：确保对话框出现在前台（与 macOS 侧的 activate 对应）。
+        // 无主窗口的应用刚被调用起来：确保对话框出现在前台。
         let _ = SetForegroundWindow(window);
     }
 }

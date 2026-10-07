@@ -1,8 +1,5 @@
 // debug 构建保留控制台（方便看子进程输出与调试）；release 构建是 GUI 子系统，不弹控制台。
-#![cfg_attr(
-    all(target_os = "windows", not(debug_assertions)),
-    windows_subsystem = "windows"
-)]
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod platform;
 

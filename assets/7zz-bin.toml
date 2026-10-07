@@ -1,7 +1,7 @@
 # 发布所用的 7-Zip 引擎：唯一来源。
 #
 # 升级用 `cargo xtask update-7zz <版本>`（或 `just update-7zz <版本>`）：
-# 它下载下面两个平台的资产、重新计算 sha256 并回写本文件。
+# 它下载引擎资产、重新计算 sha256 并回写本文件。
 
 version = "26.03"
 
@@ -9,8 +9,3 @@ version = "26.03"
 archive = "7zz-windows-x64.zip"
 binary = "7zz.exe"
 sha256 = "91b8fd4905af6f1a0b1ae05332b11e6c951f13ed606d33c433bbd488b580aba6"
-
-[macos-arm64]
-archive = "7zz-macos-universal.tar.xz"
-binary = "7zz"
-sha256 = "da7d1046ee70aa9acff97e3423b07086a0eaaa223effce10f7a741d7d9d2a91c"

@@ -14,11 +14,11 @@ alias v  := verify
 prepare:
     cargo xtask prepare
 
-# 升级固定引擎版本：下载两个平台的资产、重算校验和、回写 assets/7zz-bin.toml
+# 升级固定引擎版本：下载引擎资产、重算校验和、回写 assets/7zz-bin.toml
 update-7zz version:
     cargo xtask update-7zz {{version}}
 
-# 生成当前平台的发布物，输出到 target/dist/
+# 生成 Windows x64 发布物，输出到 target/dist/
 package:
     cargo xtask package
 
@@ -66,4 +66,3 @@ ci-list count="5":
 # 把最近一次 CI 的发布物下载到 target/ci/；指定可用 gh run download <run-id> --name …
 artifacts:
     gh run download --name ezz-windows-x64 --dir target/ci
-    gh run download --name ezz-macos-arm64 --dir target/ci

@@ -13,18 +13,8 @@ env:
 
 jobs:
   build:
-    name: Build ${{ matrix.platform }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos-15
-            platform: macos-arm64
-            artifact: target/dist/ezz-macos-arm64.dmg
-          - os: windows-latest
-            platform: windows-x64
-            artifact: target/dist/ezz-windows-x64.zip
+    name: Build windows-x64
+    runs-on: windows-latest
 
     steps:
       - name: Checkout code
@@ -35,19 +25,14 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Verify macOS runner architecture
-        if: runner.os == 'macOS'
-        shell: bash
-        run: test "$(uname -m)" = "arm64"
-
       - name: Package desktop application
         run: cargo xtask package
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
-          name: artifacts-${{ matrix.platform }}
-          path: ${{ matrix.artifact }}
+          name: artifacts-windows-x64
+          path: target/dist/ezz-windows-x64.zip
           if-no-files-found: error
 
   release:

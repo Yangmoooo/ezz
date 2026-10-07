@@ -19,18 +19,8 @@ concurrency:
 
 jobs:
   check:
-    name: Check on ${{ matrix.platform }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos-15
-            platform: macos-arm64
-            artifact: ezz-macos-arm64.dmg
-          - os: windows-latest
-            platform: windows-x64
-            artifact: ezz-windows-x64.zip
+    name: Check on windows-x64
+    runs-on: windows-latest
 
     steps:
       - uses: actions/checkout@v6
@@ -60,47 +50,7 @@ jobs:
       - name: Package release artifact
         run: cargo xtask package
 
-      - name: Verify the packaged artifact (macOS)
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          set -eu
-          test "$(uname -m)" = "arm64"
-
-          version="$(sed -n '/^\[package\]/,/^\[/p' Cargo.toml | grep -m1 '^version' | sed -E 's/.*"([^"]+)".*/\1/')"
-          dmg=target/dist/ezz-macos-arm64.dmg
-          mount=/tmp/ezz-dmg
-          test -f "$dmg"
-          if ls target/dist | grep -Eq 'ezz-[0-9]+\.[0-9]+'; then
-            echo "artifact name contains a version" >&2
-            exit 1
-          fi
-
-          hdiutil attach -nobrowse -readonly -mountpoint "$mount" "$dmg"
-          app="$mount/Ezz.app"
-          test -d "$app"
-          test "$(readlink "$mount/Applications")" = "/Applications"
-          test -f "$mount/README.md"
-          test -f "$mount/CHANGELOG.md"
-          test -f "$app/Contents/MacOS/ezz"
-          test -f "$app/Contents/MacOS/7zz"
-          test -f "$app/Contents/Resources/ezz.icns"
-          test -f "$app/Contents/Resources/licenses/ezz-LICENSE.txt"
-          test -f "$app/Contents/Resources/licenses/unRarLicense.txt"
-          plutil -extract CFBundleDisplayName raw "$app/Contents/Info.plist"
-          test "$(plutil -extract CFBundleShortVersionString raw "$app/Contents/Info.plist")" = "$version"
-          codesign --verify --deep --strict "$app"
-
-          work="$PWD/target/e2e"
-          rm -rf "$work" && mkdir -p "$work/in"
-          printf 'packaged artifact check\n' > "$work/in/payload.txt"
-          (cd "$work/in" && "$app/Contents/MacOS/7zz" a "$work/archive.zip" payload.txt)
-          "$app/Contents/MacOS/ezz" "$work/archive.zip"
-          grep -q "packaged artifact check" "$work/archive/payload.txt"
-          hdiutil detach "$mount"
-
-      - name: Verify the packaged artifact (Windows)
-        if: runner.os == 'Windows'
+      - name: Verify the packaged artifact
         shell: bash
         run: |
           set -eu
@@ -141,7 +91,7 @@ jobs:
       - name: Upload the packaged artifact
         uses: actions/upload-artifact@v6
         with:
-          name: ezz-${{ matrix.platform }}
-          path: target/dist/${{ matrix.artifact }}
+          name: ezz-windows-x64
+          path: target/dist/ezz-windows-x64.zip
           retention-days: 30
           if-no-files-found: error
