@@ -271,6 +271,76 @@ fn an_existing_file_named_like_the_archive_forces_a_sequence_suffix() {
     );
 }
 
+/// 目标名被占用时，与归档同名的重复根目录层由 ezz 补掉（`-spe` 此时不生效）。
+#[test]
+#[ignore = "requires cargo xtask prepare"]
+fn a_duplicate_root_is_hoisted_when_the_result_name_is_taken() {
+    let seven_zip = prepared_seven_zip();
+
+    let sandbox = tempfile::tempdir().expect("create test sandbox");
+    let source = sandbox.path().join("source/bundle");
+    let archive = sandbox.path().join("bundle.7z");
+    let build = || {
+        std::fs::create_dir_all(&source).expect("create source directory");
+        std::fs::write(source.join("payload.txt"), b"payload").expect("write payload");
+        create_archive(
+            &seven_zip,
+            &sandbox.path().join("source"),
+            &archive,
+            &["bundle"],
+        );
+        std::fs::remove_dir_all(sandbox.path().join("source")).expect("remove source tree");
+    };
+    build();
+
+    let workflow = workflow(&seven_zip);
+
+    // 没冲突：引擎的 `-spe` 自己剥掉重复层。
+    let first = workflow.extract(&archive).expect("first extraction");
+    assert_eq!(first.output, sandbox.path().join("bundle"));
+    assert!(first.output.join("payload.txt").is_file());
+
+    // 第二次：目标名被占用，结果退让成 `bundle (1)`，重复层由 ezz 补掉。
+    build();
+    let second = workflow.extract(&archive).expect("second extraction");
+    assert_eq!(second.output, sandbox.path().join("bundle (1)"));
+    assert!(second.output.join("payload.txt").is_file());
+    assert!(!second.output.join("bundle").exists());
+    assert!(
+        sandbox.path().join("bundle/payload.txt").is_file(),
+        "the first result must stay untouched"
+    );
+}
+
+/// 单一根目录名与归档名不同时不得动它：规则只管“与归档同名的重复层”。
+#[test]
+#[ignore = "requires cargo xtask prepare"]
+fn a_single_root_with_a_different_name_is_not_hoisted() {
+    let seven_zip = prepared_seven_zip();
+
+    let sandbox = tempfile::tempdir().expect("create test sandbox");
+    let source = sandbox.path().join("source/inner");
+    std::fs::create_dir_all(&source).expect("create source directory");
+    std::fs::write(source.join("payload.txt"), b"payload").expect("write payload");
+    let archive = sandbox.path().join("bundle.7z");
+    create_archive(
+        &seven_zip,
+        &sandbox.path().join("source"),
+        &archive,
+        &["inner"],
+    );
+    std::fs::remove_dir_all(sandbox.path().join("source")).expect("remove source tree");
+    std::fs::create_dir(sandbox.path().join("bundle")).expect("create existing directory");
+
+    let outcome = workflow(&seven_zip)
+        .extract(&archive)
+        .expect("extract archive");
+
+    let output = sandbox.path().join("bundle (1)");
+    assert_eq!(outcome.output, output);
+    assert!(output.join("inner/payload.txt").is_file());
+}
+
 #[test]
 #[ignore = "requires cargo xtask prepare"]
 fn existing_directory_is_preserved_and_new_output_directory_gets_a_sequence_suffix() {
