@@ -85,18 +85,6 @@ just test-ignored # 需要真实 7-Zip 的端到端测试，以及 Windows 对�
 just verify       # 提交前跑这个：格式、clippy、全部测试
 ```
 
-### 发布物
-
-```sh
-just package      # 等价于 cargo xtask package
-```
-
-输出位于 `target/dist/`，文件名不含版本号：
-
-`ezz-windows-x64.zip` 内含 `ezz-windows-x64/`：`ezz.exe`、`7zz.exe`、`README.md` 与 `CHANGELOG.md`、`licenses/`
-
-版本只有一个来源：`Cargo.toml` 的 `package.version`（写在 exe 的 `VERSIONINFO` 里）
-
 ## 许可证
 
 Ezz 使用 LGPL-2.1-or-later。发布物同时包含 7-Zip、unRAR 相关许可证原文；详情见 [`assets/7zip`](./assets/7zip)
