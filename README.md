@@ -12,14 +12,6 @@ Ezz 是一个轻量解压工具，它封装了 7-Zip 作为引擎，自动尝试
 
 ## 安装
 
-### macOS
-
-1. 下载 `ezz-macos-arm64.dmg` 并打开
-2. 把 `Ezz.app` 拖进“应用程序”目录
-3. 选择用 `Ezz.app` 打开归档
-
-### Windows
-
 1. 下载并完整解压 `ezz-windows-x64.zip`
 2. 保持 `ezz.exe` 与 `7zz.exe` 位于同一目录
 3. 用 `ezz.exe` 打开归档，或直接启动 `ezz.exe` 后选择文件
@@ -28,7 +20,7 @@ Ezz 不提供安装器，也不会修改注册表或抢占默认文件关联。�
 
 ## 使用方式
 
-- 在 Finder 或 Windows 资源管理器中选择文件并用 Ezz 打开
+- 在资源管理器中选择文件并用 Ezz 打开
 - 直接启动 Ezz 时会显示系统文件选择器
 - 归档处理完成后会显示通知并报告最终路径
 
@@ -61,10 +53,10 @@ Ezz 不提供安装器，也不会修改注册表或抢占默认文件关联。�
 
 Ezz 没有设置文件。密码库与日志放在同一个应用数据目录：
 
-| 数据 | macOS | Windows |
-| --- | --- | --- |
-| 密码库 | `~/Library/Application Support/ezz/passwords.json` | `%LOCALAPPDATA%\ezz\passwords.json` |
-| 日志 | `~/Library/Application Support/ezz/ezz.log` | `%LOCALAPPDATA%\ezz\ezz.log` |
+| 数据 | 位置 |
+| --- | --- |
+| 密码库 | `%LOCALAPPDATA%\ezz\passwords.json` |
+| 日志 | `%LOCALAPPDATA%\ezz\ezz.log` |
 
 ### 密码库格式
 
@@ -101,12 +93,9 @@ just package      # 等价于 cargo xtask package
 
 输出位于 `target/dist/`，文件名不含版本号：
 
-| 平台 | 产物 | 内容 |
-| --- | --- | --- |
-| Windows | `ezz-windows-x64.zip` | `ezz-windows-x64/`：`ezz.exe`、`7zz.exe`、`README.md` 与 `CHANGELOG.md`、`licenses/` |
-| macOS | `ezz-macos-arm64.dmg` | 卷标 `Ezz`：`Ezz.app`（内含 `7zz`、图标与 `licenses/`）、`README.md` 与 `CHANGELOG.md`、指向 `/Applications` 的符号链接 |
+`ezz-windows-x64.zip` 内含 `ezz-windows-x64/`：`ezz.exe`、`7zz.exe`、`README.md` 与 `CHANGELOG.md`、`licenses/`
 
-版本只有一个来源：`Cargo.toml` 的 `package.version`（Windows 写在 exe 的 `VERSIONINFO` 里，macOS 写在 `Info.plist` 里）
+版本只有一个来源：`Cargo.toml` 的 `package.version`（写在 exe 的 `VERSIONINFO` 里）
 
 ## 许可证
 
